@@ -12,14 +12,29 @@
       "Bash(snap list *)",
       "Bash(GOROOT=/snap/go/current bash *)",
       "Bash(echo *)",
-      "Bash(timeout 5 /home/vismit/motadata/Motadata/motadata/motadata-host-agent/bin/motadata-host-agent)",
+      "Bash(timeout 5 bin/motadata-host-agent)",
       "Read(//tmp/**)",
       "Read(//usr/local/go/**)",
       "Read(//usr/lib/**)",
       "Read(//snap/go/current/**)",
       "Read(//proc/**)",
-      "Bash(rm /home/vismit/motadata/Motadata/motadata/.claude/skills/detect-language/SKILL.md)",
-      "Bash(rmdir /home/vismit/motadata/Motadata/motadata/.claude/skills/detect-language)"
+      "Bash(rm .claude/skills/detect-language/SKILL.md)",
+      "Bash(rmdir .claude/skills/detect-language)",
+      "Bash(mkdir -p __TRACKED_VAR__/.config/systemd/user)",
+      "Bash(systemctl --user daemon-reload)",
+      "Bash(snap install *)",
+      "Bash(curl *)",
+      "Bash(journalctl *)",
+      "Bash(systemctl --user *)",
+      "Bash(chmod +x *)",
+      "Bash(ln -sf *)",
+      "Bash(mkdir -p *)",
+      "Write(apps/**)",
+      "Edit(apps/**)",
+      "Read(apps/**)",
+      "Skill(update-config)",
+      "WebFetch",
+      "WebSearch"
     ]
   }
 }
