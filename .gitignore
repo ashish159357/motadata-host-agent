@@ -1,9 +1,10 @@
-# Phase outputs — not needed on cloned machines
+# Phase outputs and logs — not needed on cloned machines
 apps/
 docs/
 bin/
 deploy/
 research_agent/
+.claude/logs/
 
 # Go build artifacts
 *.test
