@@ -63,8 +63,11 @@ Before executing the binary, you MUST validate the following:
 2. Extract expected language/service
 3. Read application path from project description
 4. Navigate to application directory
-5. Execute the binary (`motadata-host-agent`)
-6. Capture stdout output (JSON)
+5. Execute the binary with output redirection:
+   ```bash
+   OUTPUT_FILE=/docs/code-detection/motadata-host-scan.json go run ./cmd/motadata-host-agent
+   ```
+6. Capture stdout output (JSON) and verify it was stored at `/docs/code-detection/motadata-host-scan.json`
 7. Parse detected language/service
 8. Compare detected vs expected
 9. Generate PASS/FAIL result
@@ -134,4 +137,42 @@ The output MUST follow this structure:
 
 
 The agent MUST perform strict pre-validation checks and fail fast if required inputs or executable artifacts are missing.
+
+---
+
+## Test Execution Results (2026-04-18)
+
+### Status: ❌ FAILED — 40% Pass Rate (4/10 apps detected)
+
+### Summary
+- **Total deployed apps:** 10 (5 Java, 5 .NET)
+- **Successfully detected:** 4 (1 Java, 3 .NET)
+- **Missing detections:** 6 (4 Java, 2 .NET)
+- **Pass rate:** 40%
+
+### Detected Applications ✓
+1. JBoss WildFly (PID 178913) → java ✓
+2. ASP.NET Core Direct (PID 183092) → dotnet ✓
+3. .NET Worker Service (PID 183085) → dotnet ✓
+4. .NET Self-contained (PID 183090) → dotnet ✓
+
+### Missing Applications ✗
+1. Spring Boot JAR (PID 174401) → **NOT DETECTED**
+2. Tomcat systemd (PID 174965) → **NOT DETECTED**
+3. Tomcat standalone (PID 175320) → **NOT DETECTED**
+4. Jetty (PID 180600) → **NOT DETECTED**
+5. ASP.NET Core nginx (PID 183093) → **NOT DETECTED**
+6. ASP.NET Core Apache (PID 183091) → **NOT DETECTED**
+
+### Generated Reports
+- **Machine-readable:** `docs/testing/test-results.json`
+- **Human-readable:** `docs/testing/test-environment-report.md`
+- **Failure Analysis:** `docs/testing/test-failure-analysis.md` (CRITICAL - lists required Phase 3 fixes)
+
+### Next Action
+👉 Run `/start-code` to implement missing detection signals for:
+- Spring Boot JAR applications (`-jar` flag, `pom.xml` files)
+- Apache Tomcat (CATALINA_* environment variables)
+- Eclipse Jetty (JETTY_HOME/JETTY_BASE environment variables)
+- ASP.NET Core reverse proxy scenarios
 
