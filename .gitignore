@@ -24,5 +24,5 @@ research_agent/
 .DS_Store
 Thumbs.db
 
-# Claude local settings
-.claude/settings.local.json
+# Claude local settings — tracked so cloned machines get permissions
+# .claude/settings.local.json
