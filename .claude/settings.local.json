@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build *)",
+      "Bash(go test *)",
+      "Bash(go vet *)",
+      "Bash(go fmt *)",
+      "Bash(gofmt *)",
+      "Bash(go version *)",
+      "Bash(go env *)",
+      "Bash(bash *)",
+      "Bash(snap list *)",
+      "Bash(GOROOT=/snap/go/current bash *)",
+      "Bash(echo *)",
+      "Bash(timeout 5 /home/vismit/motadata/Motadata/motadata/motadata-host-agent/bin/motadata-host-agent)",
+      "Read(//tmp/**)",
+      "Read(//usr/local/go/**)",
+      "Read(//usr/lib/**)",
+      "Read(//snap/go/current/**)",
+      "Read(//proc/**)",
+      "Bash(rm /home/vismit/motadata/Motadata/motadata/.claude/skills/detect-language/SKILL.md)",
+      "Bash(rmdir /home/vismit/motadata/Motadata/motadata/.claude/skills/detect-language)"
+    ]
+  }
+}

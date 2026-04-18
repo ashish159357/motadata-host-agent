@@ -1,0 +1,62 @@
+language: java
+skills:
+  - skill: springboot-jar-linux-systemd
+    tech: Spring Boot JAR
+    os: linux
+    variant: Packaged as systemd service, most common production pattern
+    include: true
+  - skill: springboot-jar-windows-service
+    tech: Spring Boot JAR
+    os: windows
+    variant: Windows service via NSSM or native wrapper
+    include: true
+  - skill: springboot-jar-linux-supervisord
+    tech: Spring Boot JAR
+    os: linux
+    variant: Process manager supervision with supervisord
+    include: false
+  - skill: tomcat-linux-systemd
+    tech: Apache Tomcat
+    os: linux
+    variant: Application server as systemd service
+    include: true
+  - skill: tomcat-windows-service
+    tech: Apache Tomcat
+    os: windows
+    variant: Application server as Windows service
+    include: true
+  - skill: tomcat-linux-standalone
+    tech: Apache Tomcat
+    os: linux
+    variant: Standalone installation, manually managed
+    include: true
+  - skill: jboss-wildfly-linux-systemd
+    tech: JBoss WildFly
+    os: linux
+    variant: Enterprise application server as systemd service
+    include: true
+  - skill: jboss-wildfly-windows-service
+    tech: JBoss WildFly
+    os: windows
+    variant: Enterprise application server as Windows service
+    include: true
+  - skill: java-linux-init-d
+    tech: Java
+    os: linux
+    variant: Legacy init.d script for any Java application
+    include: false
+  - skill: jetty-linux-systemd
+    tech: Jetty
+    os: linux
+    variant: Lightweight application server as systemd service
+    include: true
+  - skill: quarkus-native-linux-systemd
+    tech: Quarkus Native
+    os: linux
+    variant: GraalVM native executable as systemd service
+    include: false
+  - skill: java-macos-launchd
+    tech: Java
+    os: macos
+    variant: Application as launchd service on macOS
+    include: false
