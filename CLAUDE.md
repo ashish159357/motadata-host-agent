@@ -72,6 +72,63 @@ motadata-host-agent/
 | `/detect-language <lang>` | Adds missing signals for one language, updates `LANGUAGES.md` |
 | `/list-languages` | Reports coverage per language from `LANGUAGES.md` |
 
+## Pipeline Architecture
+
+The project is driven by a 4-phase pipeline. Each phase is invoked manually
+through a slash command in `.claude/commands/`, and each phase's output feeds
+the next.
+
+```
+┌──────────────────┐    ┌──────────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│ Phase 1          │    │ Phase 2              │    │ Phase 3          │    │ Phase 4          │
+│ /start-research  │───▶│ /start-environment-  │───▶│ /start-code      │───▶│ /start-test      │
+│                  │    │  setup               │    │                  │    │                  │
+│ Research host/VM │    │ Provision host and   │    │ Close detection  │    │ Run agent binary │
+│ deployment       │    │ deploy a real        │    │ gaps in          │    │ against deployed │
+│ patterns per     │    │ application using    │    │ internal/system, │    │ app; verify it   │
+│ language.        │    │ Phase 1 skills.      │    │ rebuild binary.  │    │ detects language.│
+│                  │    │                      │    │                  │    │                  │
+│ Output:          │    │ Output:              │    │ Output:          │    │ Output:          │
+│ .claude/skills/  │    │ docs/environment/    │    │ bin/motadata-    │    │ PASS/FAIL report │
+│ *-SKILL.md       │    │ current-             │    │ host-agent       │    │ with reasons for │
+│ (deployment      │    │ environment.md       │    │ (ELF binary)     │    │ any miss.        │
+│ detection        │    │                      │    │                  │    │                  │
+│ skills)          │    │                      │    │                  │    │                  │
+└──────────────────┘    └──────────────────────┘    └──────────────────┘    └──────────────────┘
+```
+
+### Phase 1 — `/start-research`
+- **Goal:** Research how a given language's services are deployed on real
+  hosts/VMs (systemd, init scripts, container runtimes, IIS, Tomcat, etc.).
+- **Produces:** One or more `SKILL.md` files under `.claude/skills/` that encode
+  signals used by Phase 2 to provision and by Phase 3 to detect.
+- **Consumed by:** Phase 2 (environment setup) and Phase 3 (detection coding).
+
+### Phase 2 — `/start-environment-setup` *(planned, not yet implemented)*
+- **Goal:** Using the skills from Phase 1, stand up a real deployment of a
+  chosen application on the current host/VM.
+- **Produces:** `docs/environment/current-environment.md` describing:
+  - which environment was provisioned (OS, runtime, supervisor),
+  - which application is deployed and how (binary path, service unit, ports),
+  - expected language label the agent should emit.
+- **Consumed by:** Phase 4 (ground truth for PASS/FAIL).
+
+### Phase 3 — `/start-code`
+- **Goal:** Close missing detection signals in `internal/system/language.go`
+  and its tests, then rebuild.
+- **Produces:** Updated `internal/system/` sources, refreshed tests, and a
+  rebuilt `bin/motadata-host-agent`.
+- **Consumed by:** Phase 4 (binary under test).
+
+### Phase 4 — `/start-test`
+- **Goal:** Run the freshly built agent against the environment described in
+  `docs/environment/current-environment.md` and confirm that every deployed
+  application is reported with the correct `language`.
+- **Produces:** A PASS/FAIL report. On FAIL, the report lists the specific
+  signal stage (environ → cmdline → files → maps → exepath) that missed, so the
+  next `/start-code` run can target it.
+- **Feedback loop:** FAIL results motivate a new Phase 1 / Phase 3 iteration.
+
 ## Package Responsibilities
 
 | Package | Role |

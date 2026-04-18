@@ -1,147 +1,130 @@
 ---
 name: dotnet-selfcontained-linux-systemd
-description: .NET self-contained single-file deployment on Linux managed by systemd; detect via exe extensionless binary in /opt or /usr/local, systemd service unit in /etc/systemd/system/*.service, and environment variable DOTNET_BUNDLE_EXTRACT_BASE_DIR set to %h/.net.
+description: .NET self-contained single-file application on Linux with systemd supervision—native ELF binary executable containing runtime and dependencies, detectable by DOTNET_BUNDLE_EXTRACT_BASE_DIR env var, self-contained systemd unit in /etc/systemd/system/*.service with Type=notify, and ELF binary name matching published app name.
 ---
 
-# .NET Self-Contained Deployment on Linux — Systemd Service
+# .NET Self-Contained (Single-File) on Linux — systemd Service
 
 ## Overview
-
-.NET self-contained deployment (SCD) is a publishing mode where the application binary includes the .NET runtime, framework libraries, and all dependencies. When combined with single-file publishing, all files are bundled into a single extensionless executable. On Linux, systemd manages the process lifecycle, allowing the application to run as a daemon service. This pattern is popular in production environments where operators want complete control over .NET version isolation, no runtime pre-installation requirement, and native Linux service integration.
+Self-contained .NET deployments publish all managed code and the .NET runtime into a single native Linux ELF executable that ships without requiring a system-wide .NET runtime installation. The app runs as a systemd service with Type=notify integration for clean lifecycle management and Journald logging. This variant is chosen by teams seeking minimal dependency footprint, simplified deployment (one file to copy), and full ownership of the runtime version independent of host updates.
 
 ## Deployment Process
 
-1. **Publish the application as self-contained single-file:**
-   ```
-   dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:GenerateRuntimeConfigurationFiles=true -o artifacts
-   ```
-   This generates an extensionless binary (e.g., `myapp`) in the `artifacts` directory for the target platform.
-
-2. **Create installation directory and copy binary:**
-   ```
-   sudo mkdir -p /opt/myapp
-   sudo cp artifacts/myapp /opt/myapp/
-   sudo chmod 0755 /opt/myapp/myapp
-   sudo chown appuser:appgroup /opt/myapp/myapp
+1. **Publish as self-contained single file:**
+   ```bash
+   dotnet publish -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o ./publish
    ```
 
-3. **Create systemd service unit file:**
-   Place a `.service` file in `/etc/systemd/system/` with the following structure:
+2. **Copy the executable to target machine** (e.g. `/opt/myapp/myapp`):
+   ```bash
+   scp publish/myapp user@host:/opt/myapp/
+   chmod +x /opt/myapp/myapp
    ```
+
+3. **Create systemd unit file** at `/etc/systemd/system/myapp.service`:
+   ```ini
    [Unit]
-   Description=My .NET Application
+   Description=My .NET App
    After=network.target
 
    [Service]
    Type=notify
    ExecStart=/opt/myapp/myapp
    WorkingDirectory=/opt/myapp
-   User=appuser
-   Group=appgroup
-   Environment="DOTNET_BUNDLE_EXTRACT_BASE_DIR=%h/.net"
+   User=myapp
    Restart=on-failure
-   RestartSec=5
+   RestartSec=10
+   Environment="DOTNET_BUNDLE_EXTRACT_BASE_DIR=%h/.net"
 
    [Install]
    WantedBy=multi-user.target
    ```
 
-4. **Reload systemd and start the service:**
-   ```
+4. **Enable and start the service:**
+   ```bash
    sudo systemctl daemon-reload
-   sudo systemctl start myapp.service
    sudo systemctl enable myapp.service
-   ```
-
-5. **Verify status:**
-   ```
-   systemctl status myapp.service
-   journalctl -u myapp.service -f
+   sudo systemctl start myapp.service
    ```
 
 ## Process Signatures
-
-- **Process name / executable:** Extensionless binary name as specified in systemd unit (e.g., `myapp`)
-- **Command-line patterns:** The binary path from `ExecStart=` directive; no arguments unless explicitly configured
-- **Parent process:** `systemd` (PID 1 or cgroup-scoped systemd manager)
-- **Typical user:** Custom unprivileged user (e.g., `appuser`), configured via `User=` in service unit
-- **Working directory:** Configured via `WorkingDirectory=` in service unit (e.g., `/opt/myapp`)
+- **Process name / executable:** Application-specific binary name (e.g. `myapp`, `api-server`); always an ELF executable with no `.dll` or `.exe` extension on Linux.
+- **Command-line patterns:** Binary path alone with no trailing arguments (e.g. `/opt/myapp/myapp`) or with config/environment overrides; often invoked by systemd with no visible arguments beyond the path.
+- **Parent process:** `systemd` (PID 1 or systemd session manager for user services).
+- **Typical user:** Service account (e.g. `myapp`, `dotnet`, `www-data`); rarely `root`.
+- **Working directory:** Application directory specified in `WorkingDirectory=` directive (e.g. `/opt/myapp`, `/srv/app`).
 
 ## File System Paths
 
 ### Linux
-
-- **Install root:** `/opt/<appname>` (convention; can be any path specified in `ExecStart`)
-- **Binaries:** `/opt/<appname>/<appname>` (the extensionless executable from publish output)
-- **Application/deploy dir:** `/opt/<appname>` (same as install root; configuration files or plugins may be placed here)
-- **Runtime extraction dir:** `$HOME/.net/` (default, or custom path set via `DOTNET_BUNDLE_EXTRACT_BASE_DIR`; systemd expands `%h` to user's home directory)
-- **Service unit file:** `/etc/systemd/system/<appname>.service`
-- **PID file:** None (systemd manages PID internally); process PID available via `systemctl show -p MainPID <appname>.service`
+- **Install root:** `/opt/<appname>`, `/srv/<appname>`, or `/usr/local/<appname>`.
+- **Binaries:** `/opt/<appname>/<appname>` (the self-contained ELF executable); no `/bin` subdirectory.
+- **Application/deploy dir:** Same as binary location; config files, appsettings.json, plugins often co-located.
+- **PID file:** No PID file; systemd manages the process lifecycle via cgroups. Inspect with `systemctl status myapp.service`.
+- **Runtime extraction:** Files extracted at runtime to `$HOME/.net/` (typically `/home/<user>/.net/`) as set by `DOTNET_BUNDLE_EXTRACT_BASE_DIR=%h/.net` in the service unit, or to `%TEMP%/.net/` if undefined (not recommended for systemd).
 
 ## Environment Variables
-
 | Variable | Purpose | Typical value |
 |---|---|---|
-| `DOTNET_BUNDLE_EXTRACT_BASE_DIR` | Base directory for extraction of bundled files from single-file binary; required for systemd to avoid $HOME undefined error | `%h/.net` (systemd will expand %h to user home) |
-| `ASPNETCORE_URLS` | (ASP.NET Core apps) Addresses and ports to bind to | `http://0.0.0.0:5000` |
-| `ASPNETCORE_ENVIRONMENT` | (ASP.NET Core apps) Environment name (Development, Staging, Production) | `Production` |
-| `DOTNET_CLI_TELEMETRY_OPTOUT` | Disable .NET SDK telemetry (if enabled) | `true` |
+| `DOTNET_BUNDLE_EXTRACT_BASE_DIR` | Directory where self-contained app extracts managed DLLs and runtime libraries at startup | `%h/.net` (systemd expands `%h` to service user's home) |
+| `ASPNETCORE_ENVIRONMENT` | (For ASP.NET Core apps) Deployment environment name | `Production`, `Development` |
+| `ASPNETCORE_URLS` | (For ASP.NET Core apps) HTTP binding addresses | `http://localhost:5000` |
+| `DOTNET_EnableDiagnostics` | Enable runtime diagnostics | `0` (disable for security) or `1` |
+| `DOTNET_CLI_TELEMETRY_OPTOUT` | Opt out of .NET CLI telemetry | `1` |
 
 ## Configuration Files
-
-- **Service unit file** — `/etc/systemd/system/<appname>.service`; defines how systemd starts, stops, restarts, and monitors the .NET application. The `Type=notify` setting enables integration with `Microsoft.Extensions.Hosting.Systemd` for graceful shutdown signalling.
-- **Application configuration** — Any `appsettings.json`, `appsettings.Production.json`, or custom config files should be placed in the `WorkingDirectory` (e.g., `/opt/myapp/appsettings.json`); the application reads them relative to `AppContext.BaseDirectory` at runtime.
+- **`/etc/systemd/system/<appname>.service`** — systemd unit file defining service metadata, Type=notify, ExecStart path, user, working directory, environment variables, and restart policy.
+- **`<appdir>/appsettings.json`** — ASP.NET Core app configuration (if applicable); loaded from working directory.
+- **`<appdir>/appsettings.Production.json`** — Environment-specific settings (if applicable).
+- **Custom config files** — Any YAML, XML, or JSON files referenced by the application; typically in the same directory as the executable or in `/etc/<appname>/`.
 
 ## Log Locations
-
-- **systemd journal:** All stdout and stderr from the process are captured by systemd and stored in the journal. View logs using `journalctl -u <appname>.service` or `journalctl -u <appname>.service -f` for live tail.
-- **Application logs:** If the application writes to files, logs are typically written to a directory configured within the application (e.g., via `appsettings.json`). Ensure the service user has write permissions to that directory.
+- **Journald (systemd journal):** All logs written to `stdout`/`stderr` are captured by systemd and indexed in Journald. View logs with:
+  ```bash
+  journalctl -u myapp.service -f
+  ```
+- **Application-specific log files** (if configured): Vary by app; check `appsettings.json` for Serilog or other logging framework configuration. Often `/var/log/<appname>/` or `<appdir>/logs/`.
 
 ## Service / Init Integration
+**systemd unit file:** `/etc/systemd/system/<appname>.service`
 
-**systemd service unit file:** `/etc/systemd/system/<appname>.service`
+The unit **must** set `Type=notify` to enable the app to signal systemd when it is ready. The .NET application integrates via the `Microsoft.Extensions.Hosting.Systemd` NuGet package (call `UseSystemd()` in Program.cs), which:
+- Notifies systemd when the host has started (SD_NOTIFY).
+- Routes all logging through systemd's Journald.
+- Gracefully handles systemd lifecycle signals (SIGTERM).
 
-Key systemd directives for .NET self-contained deployments:
-
-- `Type=notify` — Tells systemd to wait for a "ready" notification from the application. Requires the NuGet package `Microsoft.Extensions.Hosting.Systemd` and a call to `.UseSystemd()` in `Program.cs`. Without this, systemd considers the service started as soon as the process forks.
-- `ExecStart=` — Absolute path to the extensionless binary; must be executable.
-- `WorkingDirectory=` — Sets the process working directory; used to locate relative config files.
-- `User=` and `Group=` — Unprivileged user and group to run the service.
-- `Restart=on-failure` — Automatically restart the service if it exits with a non-zero status.
-- `RestartSec=5` — Wait 5 seconds before restarting.
-- `Environment=` — Set environment variables (e.g., `DOTNET_BUNDLE_EXTRACT_BASE_DIR=%h/.net`).
-
-**Enable auto-start at boot:**
-```
-sudo systemctl enable <appname>.service
-```
+Service names and unit file paths follow the pattern:
+- Unit identifier: `<appname>.service` (e.g. `myapp.service`, `api-server.service`)
+- Full path: `/etc/systemd/system/<appname>.service`
+- Enable with: `systemctl enable <appname>.service`
+- Start with: `systemctl start <appname>.service`
+- Check status: `systemctl status <appname>.service` or `journalctl -u <appname>.service`
 
 ## Detection Heuristics
 
-1. **Process executable name:** Look for an extensionless binary name running under systemd (e.g., a binary at `/opt/myapp/myapp` with no `.exe` or `.dll` extension).
+1. **Executable type:** Process command is a native Linux ELF binary (file type check: `file /proc/<pid>/exe` returns `ELF 64-bit LSB executable`), not a script or managed wrapper.
 
-2. **Environment variable:** Check for `DOTNET_BUNDLE_EXTRACT_BASE_DIR` set to `%h/.net` or a similar bundle extraction path in the process environment (`/proc/[pid]/environ`).
+2. **Environment variable:** Presence of `DOTNET_BUNDLE_EXTRACT_BASE_DIR` environment variable in the process environment (`/proc/<pid>/environ`), or presence of extracted .NET runtime files under `$HOME/.net/` for the service user.
 
-3. **Systemd unit file:** Search `/etc/systemd/system/` for `.service` files with `Type=notify` in the `[Service]` section and an `ExecStart=` pointing to an executable in `/opt/`, `/usr/local/bin/`, or similar application directories.
+3. **Systemd parent and unit file:** Parent process is `systemd` (or systemd session manager), and `/etc/systemd/system/<procname>.service` exists with `Type=notify` in the `[Service]` section.
 
-4. **Binary content:** The executable is a self-contained .NET binary. Its initial bytes are not a standard ELF shebang; it contains embedded .NET runtime and assemblies. Running `file <binary>` will return "ELF 64-bit LSB executable" or similar, but the binary is significantly larger (tens or hundreds of MB) than a typical apphost stub.
+4. **Working directory:** Application working directory contains `appsettings.json` or other .NET configuration files alongside the single-file ELF executable.
 
-5. **Working directory:** The process runs with a `WorkingDirectory` that often contains `appsettings.json`, `appsettings.Production.json`, or other application-specific config files.
+5. **Shared library patterns:** The process maps contain isolated .NET runtime libraries (e.g. `libcoreclr.so`, `libmono.so`, `libcrypto.so`) extracted and loaded from `$HOME/.net/` rather than from system paths, indicating bundled dependencies.
+
+6. **Process name:** Absence of `.dll` or `.exe` extensions; binary name is the app name (e.g. `myapp`, not `myapp.exe` or `myapp.dll`).
 
 ## Version / Variant Differences
 
-- **.NET version:** Self-contained deployments pin a specific .NET version (e.g., .NET 6, 7, 8, 9) at publish time. Operators cannot use a newer runtime already installed on the host; the bundled version is used exclusively. Determine the version by examining the binary's embedded metadata or the project file used during publish.
-
-- **Single-file vs. folder publish:** This skill covers single-file deployments only. Folder deployments place the binary alongside `.deps.json`, `.runtimeconfig.json`, and other support files; they appear as multiple files in the directory. Single-file deployments bundle all of these into one binary.
-
-- **Trimming and ReadyToRun:** Applications published with `-p:PublishTrimmed=true` or `-p:PublishReadyToRun=true` are still self-contained and systemd-managed, but exhibit different startup and memory profiles. No process-level detection changes; the binary is larger (ReadyToRun) or smaller (Trimmed).
-
-- **systemd integration package:** Applications that call `.UseSystemd()` from `Microsoft.Extensions.Hosting.Systemd` register with systemd as a "notify" service and log to the journal. Those without the package still run under systemd but with `Type=simple` and may write logs separately. Detection should handle both cases.
+- **.NET 5 and later:** Self-contained single-file publishing is fully supported. Trimming and compression options available in .NET 6+.
+- **.NET 3.x / .NET Core 3.x:** Self-contained deployment supported; single-file option introduced in `.NET Core 3.0`. systemd integration available via `Microsoft.Extensions.Hosting.Systemd` NuGet package.
+- **Runtime extraction:** In .NET 5+, managed DLLs are extracted to memory by default; only native binaries may be extracted to disk (unless `IncludeNativeLibrariesForSelfExtract=true` is set during publish).
+- **Linux runtime identifiers:** Common RIDs are `linux-x64`, `linux-arm64`, `linux-musl-x64` (Alpine). Detector must account for architecture-specific binaries deployed on matching architectures only.
+- **Trimming:** .NET 6+ supports trimming to reduce single-file size; presence of trimmed executables will show smaller `.so` libraries and reduced binary footprint.
 
 ## Sources
-
 - [Create a single file for application deployment - .NET | Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview)
-- [.NET application publishing overview - .NET | Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/core/deploying/)
 - [.NET Core and systemd - .NET Blog](https://devblogs.microsoft.com/dotnet/net-core-and-systemd/)
-- [Running .NET Applications as a Systemd Service on Linux - Maarten Balliauw Blog](https://blog.maartenballiauw.be/posts/2021-05-25-running-a-net-application-as-a-service-on-linux-with-systemd/)
-- [How to run a .NET Core console app as a service using Systemd on Linux (RHEL) - Swimburger](https://swimburger.net/blog/dotnet/how-to-run-a-dotnet-core-console-app-as-a-service-using-systemd-on-linux)
+- [Self-Contained Linux Applications in .NET Core](https://github.com/dotnet/core/blob/main/Documentation/self-contained-linux-apps.md)
+- [.NET application publishing overview - .NET | Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/core/deploying/)
+- [dotnet publish command - .NET CLI | Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-publish)

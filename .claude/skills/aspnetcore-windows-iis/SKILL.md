@@ -1,196 +1,111 @@
 ---
 name: aspnetcore-windows-iis
-description: ASP.NET Core on Windows IIS via ASP.NET Core Module; detectable by w3wp.exe or dotnet.exe processes, `web.config` with `aspNetCore` element, and `hostingModel` attribute (inprocess or outofprocess).
+description: ASP.NET Core app hosted by IIS via the ASP.NET Core Module (ANCM) on Windows in either in-process (w3wp.exe) or out-of-process (dotnet.exe) mode, configured via AspNetCoreHostingModel in web.config or .csproj.
 ---
 
-# ASP.NET Core on Windows IIS — In-Process / Out-of-Process Hosting
+# ASP.NET Core on Windows — IIS with ANCM (In-Process or Out-Of-Process)
 
 ## Overview
-
-ASP.NET Core applications deployed to Internet Information Services (IIS) on Windows Server use the ASP.NET Core Module (ANCM/AspNetCoreModuleV2) as a native IIS module to handle HTTP requests. The module supports two hosting models: in-process (runs app in the same process as the IIS worker) and out-of-process (runs app in a separate Kestrel process). In-process hosting has been the default since ASP.NET Core 3.0 and provides better performance by avoiding loopback network proxying. This is the most common production deployment pattern for ASP.NET Core on Windows enterprise infrastructure.
+ASP.NET Core on IIS uses the ASP.NET Core Module (ANCM), a native IIS module that either hosts the app in-process within the w3wp.exe IIS worker process, or runs it out-of-process via a separate dotnet.exe process connected to Kestrel. In-process hosting is the default since ASP.NET Core 3.0 and provides significantly higher request throughput. This is a mainstream production deployment pattern for enterprise ASP.NET Core workloads on Windows Server.
 
 ## Deployment Process
-
-1. **Publish the application** from Visual Studio or command line:
-   ```
-   dotnet publish -c Release -o C:\inetpub\wwwroot\myapp
-   ```
-
-2. **Install ASP.NET Core Runtime** (if framework-dependent deployment):
-   ```
-   Download from https://dotnet.microsoft.com/download and install
-   ```
-
-3. **Create IIS Application Pool** (via IIS Manager or PowerShell):
-   - Set pipeline mode to "Integrated"
-   - Set .NET CLR version to "No Managed Code" (ANCM is native, not CLR-based)
-   - Match bitness (x64 or x86) to the app's target architecture
-
-4. **Create IIS Website/Application** (via IIS Manager):
-   - Point physical path to the published app root (where `web.config` is located)
-   - Bind to HTTP/HTTPS port (typically 80 or 443)
-   - Assign to the application pool created in step 3
-
-5. **Verify web.config** is present at the app root:
-   - For framework-dependent: `<aspNetCore processPath="dotnet" arguments=".\MyApp.dll" hostingModel="inprocess" />`
-   - For self-contained: `<aspNetCore processPath=".\MyApp.exe" hostingModel="inprocess" />`
-
-6. **Enable required IIS features**:
-   ```
-   Windows Feature: IIS > Application Development Features > ASP.NET Core Hosting Bundle
-   ```
-
-7. **Start the application pool** and verify the site is running via HTTP.
+1. Install ASP.NET Core Runtime or SDK on Windows Server via the .NET Hosting Bundle installer (includes ANCM).
+2. Build and publish the ASP.NET Core application: `dotnet publish -c Release`.
+3. Create an IIS Application Pool (one pool per app; bitness must match the app's target architecture).
+4. Create an IIS Site or Application, point its physical path to the published output directory.
+5. Set the application's `.csproj` hosting model:
+   - In-process: `<AspNetCoreHostingModel>InProcess</AspNetCoreHostingModel>` (default since ASP.NET Core 3.0)
+   - Out-of-process: `<AspNetCoreHostingModel>OutOfProcess</AspNetCoreHostingModel>`
+6. Create or update `web.config` in the site root with the `<aspNetCore>` handler configuration (IIS publishes this automatically).
+7. Start or restart the IIS site; ANCM loads the app on first request (in-process) or starts the separate dotnet process (out-of-process).
 
 ## Process Signatures
-
 - **Process name / executable:**
-  - **In-process:** `w3wp.exe` (IIS worker process) — the ASP.NET Core app runs inside this process
-  - **Out-of-process:** `dotnet.exe` or `MyApp.exe` (self-contained) — the app runs in a separate process; IIS worker (`w3wp.exe` or `iisexpress.exe`) acts as reverse proxy
-
+  - In-process: `w3wp.exe` (IIS worker process)
+  - Out-of-process: `dotnet.exe` (Kestrel backend) running the compiled app DLL
 - **Command-line patterns:**
-  - In-process: `w3wp.exe -appPool "MyAppPool"`
-  - Out-of-process: `dotnet.exe .\MyApp.dll` or `.\MyApp.exe` (launched by ANCM with environment variable `ASPNETCORE_PORT` set to a random high port, e.g., 12345)
-
+  - In-process: `w3wp.exe -appPool <AppPoolName>` (standard IIS pattern)
+  - Out-of-process: `dotnet.exe "C:\path\to\app.dll"` or similar with app name
 - **Parent process:**
-  - `services.exe` → `svchost.exe` (WAS — Windows Process Activation Service) → `w3wp.exe` or `iisexpress.exe`
-  - For out-of-process, the child app process (dotnet.exe or MyApp.exe) is spawned by w3wp.exe
-
-- **Typical user:**
-  - `IUSR` (IIS anonymous identity) or `ApplicationPoolIdentity` (app pool-specific identity)
-  - May be overridden to a custom domain user or service account for resource access
-
-- **Working directory:**
-  - The physical path of the IIS website (typically `C:\inetpub\wwwroot\myapp` or custom directory)
-  - Configured in IIS site properties or `web.config` location element
+  - In-process: `svchost.exe` (Windows Process Activation Service, WAS)
+  - Out-of-process: `w3wp.exe` (the IIS worker spawns and manages the dotnet process)
+- **Typical user:** `IIS APPPOOL\<AppPoolName>` (the IIS Application Pool identity, often `IIS APPPOOL\DefaultAppPool`)
+- **Working directory:** The published application directory (e.g., `C:\inetpub\wwwroot\myapp` or `C:\apps\myapp`)
 
 ## File System Paths
 
 ### Windows
-
-- **Install root:**
-  - ASP.NET Core Runtime: `C:\Program Files\dotnet\` (for framework-dependent deployments)
-  - IIS: `C:\Windows\System32\inetsrv\`
-  - ASP.NET Core Module: `C:\Windows\System32\inetsrv\aspnetcore.dll` (native module, loaded by IIS)
-
-- **Binaries:**
-  - Runtime binaries: `C:\Program Files\dotnet\dotnet.exe`, `C:\Program Files\dotnet\shared\Microsoft.NETCore.App\{version}\`
-  - Self-contained app: `C:\inetpub\wwwroot\myapp\MyApp.exe` (and all dependencies in the same directory)
-
-- **Application/deploy dir:**
-  - Default: `C:\inetpub\wwwroot\{appname}\` (or any custom physical path configured in IIS)
-  - Must contain: `web.config`, `*.dll` (app and framework assemblies), `appsettings.json`, `appsettings.{Environment}.json`, static files
+- **Install root (ANCM + Runtime):** `C:\Program Files\dotnet\` (runtime binaries)
+- **ANCM module binary:** `C:\Program Files\IIS\Asp.Net Core Module\v2\aspnetcore.dll` (native IIS module, installed by .NET Hosting Bundle)
+- **Binaries:** Published app DLLs and dependencies in the application directory; runtime in `C:\Program Files\dotnet\shared\Microsoft.AspNetCore.App\<version>\`
+- **Application/deploy dir:** e.g. `C:\inetpub\wwwroot\myapp\` or custom path configured in IIS Site binding
+- **web.config:** `<AppDirectory>\web.config` (auto-generated by Visual Studio or dotnet publish; defines `<aspNetCore>` handler)
 
 ## Environment Variables
-
 | Variable | Purpose | Typical value |
 |---|---|---|
-| `ASPNETCORE_ENVIRONMENT` | Deployment environment (Development/Staging/Production) | `Production` (set in web.config or system) |
-| `ASPNETCORE_URLS` | Server listening address(es) — in-process uses IIS binding, out-of-process listens on localhost with port from `ASPNETCORE_PORT` | `http://localhost:5000` (out-of-process); ignored in-process |
-| `ASPNETCORE_PORT` | Port for out-of-process Kestrel to listen on; set by ANCM | random high port (e.g., `12345`) |
-| `ASPNETCORE_CONTENTROOT` | Base path for the app (usually the web.config directory) | `C:\inetpub\wwwroot\myapp` |
-| `ASPNETCORE_APPLICATIONBASE` | Application base path (set by IIS integration) | same as content root |
-| `DOTNET_ROOT` | Root directory of the .NET runtime (out-of-process) | `C:\Program Files\dotnet` |
-| `DOTNET_MULTILEVEL_LOOKUP` | Enable multi-level .NET installation lookup | `0` (usually disabled in IIS) |
+| `ASPNETCORE_ENVIRONMENT` | Sets the hosting environment (Development, Staging, Production) | `Production` |
+| `ASPNETCORE_URLS` | Not typically used with IIS integration (port handled by ANCM); present in some configs | `http://localhost:5000` |
+| `DOTNET_RUNNING_IN_CONTAINER` | Not set; indicates if running in a container | Absent (this is bare-metal IIS, not containerized) |
+| `ASPNETCORE_PORT` | (Out-of-process only) Kestrel port assigned by ANCM via environment variable | Random high port (e.g. `54321`) |
 
 ## Configuration Files
+- **web.config** — Required XML file in the application root directory. Defines the `<aspNetCore>` handler element that points to the app's executable or DLL and sets hosting mode (`hostingModel="inprocess"` or `hostingModel="outofprocess"`). Example snippet:
+  ```xml
+  <aspNetCore processPath="dotnet" arguments="myapp.dll" hostingModel="inprocess" />
+  ```
+  (For out-of-process, `processPath` is `dotnet` and `arguments` is the DLL path; for in-process, the module loads the DLL directly into w3wp.exe)
 
-- **web.config** — Located at the application root (`C:\inetpub\wwwroot\{appname}\web.config`). Contains ASP.NET Core Module configuration with `<aspNetCore>` element:
-  - `processPath`: Path to `dotnet` or `MyApp.exe`
-  - `arguments`: For framework-dependent, the .dll file name (e.g., `.\MyApp.dll`)
-  - `hostingModel`: `inprocess` (default since 3.0) or `outofprocess`
-  - `stdoutLogEnabled`: Boolean; if `true`, stdout/stderr logged to disk
-  - `stdoutLogFile`: Path for stdout logs (relative to app root, e.g., `.\logs\stdout`); ANCM appends timestamp and `.log` extension
-  - `rapidFailsPerMinute`: Max crashes per minute (out-of-process only; default 10)
-  - `requestTimeout`: Timeout for requests to out-of-process app (default 2 minutes)
-  - `startupTimeLimit`: Seconds to wait for process startup (default 120)
-  - `shutdownTimeLimit`: Seconds to wait for graceful shutdown (default 10)
-  - Environment variables can be set via `<environmentVariables>` child element
+- **.csproj** — Visual Studio project file; contains `<AspNetCoreHostingModel>` property. Not consumed by the deployed IIS site, but controls the published web.config content.
 
-- **appsettings.json** — Standard ASP.NET Core configuration file at the app root; loaded at runtime
-
-- **appsettings.{Environment}.json** — Environment-specific settings (e.g., `appsettings.Production.json`); loaded if `ASPNETCORE_ENVIRONMENT` matches
+- **appsettings.json** — (Optional) Application configuration file, usually in the app root alongside published DLLs.
 
 ## Log Locations
-
-- **ANCM debug logs** (for troubleshooting module issues):
-  - Location: `C:\Windows\System32\LogFiles\HTTPERR\`
-  - File naming: `httperr{date}.log`
-
-- **Application stdout/stderr logs** (if `stdoutLogEnabled="true"` in web.config):
-  - Base path: Value of `stdoutLogFile` attribute (relative to app root, default `.\logs\stdout`)
-  - Example: `C:\inetpub\wwwroot\myapp\logs\stdout_20240418_123456_1234.log` (timestamp and PID added by ANCM)
-  - Out-of-process Kestrel and application exceptions are captured here
-
-- **Event Viewer logs** (Windows Event Viewer):
-  - Application log entries for ASP.NET Core Module errors and crashes
-  - Look for source "IIS AspNetCore Module" or application events
-
-- **IIS logs** (if HTTP logging enabled):
-  - Default: `C:\inetpub\logs\LogFiles\W3SVC{siteID}\`
-  - Contains HTTP request/response details per IIS configuration
+- **ANCM startup/diagnostic logs:** `C:\<AppDirectory>\logs\` (if stdout/stderr logging is enabled in web.config via `stdoutLogEnabled="true"` and `stdoutLogFile=".\logs\stdout"`)
+- **IIS Application Pool crash dumps and events:** Event Viewer > Windows Logs > Application (event ID related to AppPool recycling or crashes)
+- **Kestrel output logs (out-of-process):** Redirected by ANCM to the configured log file (see web.config `stdoutLogFile` attribute) or console
+- **No centralized app logs by default** — Log destinations depend on app's Serilog/NLog/other logging configuration
 
 ## Service / Init Integration
+ANCM is invoked by IIS when the site starts. The IIS site itself is managed by:
+- **IIS service:** `W3SVC` (World Wide Web Publishing Service), running under `SYSTEM` or a custom service account
+- **Application Pool:** Identified by name (e.g., `DefaultAppPool`, `MyAppPool`), managed by WAS (Windows Process Activation Service)
+- **No systemd or init.d equivalent** — Windows Services manage IIS; IIS manages Application Pools; Application Pools manage w3wp.exe instances
 
-ASP.NET Core on IIS is managed by:
-
-- **Windows Process Activation Service (WAS):** System service (`WAS` service in Services.msc) that manages IIS application pools and worker processes
-- **W3SVC (World Wide Web Publishing Service):** IIS system service that manages websites and modules
-- **Application Pool:** Logical container within IIS that runs `w3wp.exe` (or `iisexpress.exe` for IIS Express)
-
-There is no systemd unit or Windows service wrapper for the app itself; IIS/WAS manage the lifecycle. Application pools can be configured to auto-start on server boot via IIS Manager:
-- Right-click Application Pool → Advanced Settings → Start Mode: `AlwaysRunning`
-
-For out-of-process deployments, the ANCM spawns the app process on first request and restarts it on failure (up to `rapidFailsPerMinute` limit).
+The app is not registered as a separate Windows Service; its lifecycle is entirely managed by IIS and the Application Pool.
 
 ## Detection Heuristics
+1. **Process name and parent:**
+   - In-process: Process `w3wp.exe` with parent `svchost.exe` (WAS)
+   - Out-of-process: Process `dotnet.exe` with parent `w3wp.exe` and command-line containing `.dll` (the app assembly name)
 
-The highest-confidence signals for detecting ASP.NET Core on IIS:
+2. **Environment variable presence:**
+   - `ASPNETCORE_ENVIRONMENT` set to any value (e.g. `Production`, `Development`)
+   - `ASPNETCORE_PORT` environment variable present (out-of-process only, indicates ANCM-assigned Kestrel port)
 
-1. **web.config file at site root** with:
-   - `<system.webServer>` element
-   - `<handlers>` containing `modules="AspNetCoreModuleV2"`
-   - `<aspNetCore>` element with `processPath` and `hostingModel` attributes
+3. **web.config presence and content:**
+   - File `<AppDirectory>\web.config` exists
+   - Contains XML element `<aspNetCore>` with attributes `processPath` and `hostingModel`
+   - Example: `<aspNetCore processPath="dotnet" arguments="myapp.dll" hostingModel="outofprocess" />`
 
-2. **Process execution context:**
-   - In-process: `w3wp.exe` process with environment variables including `ASPNETCORE_URLS`, `ASPNETCORE_ENVIRONMENT`, or command-line args matching IIS pool name
-   - Out-of-process: `dotnet.exe` or `*.exe` child process under `w3wp.exe` with parent set to IIS worker, and `ASPNETCORE_PORT` environment variable set to a high ephemeral port
+4. **Executable path and working directory:**
+   - In-process: w3wp.exe's working directory is the IIS Application Pool's physical path (the app directory)
+   - Out-of-process: dotnet.exe working directory is the app directory; its command-line argument is the .csproj output (app.dll)
 
-3. **IIS ApplicationPool association:**
-   - Run `Get-IISAppPool` (PowerShell) or inspect IIS configuration files at `C:\Windows\System32\inetsrv\config\applicationHost.config`
-   - Look for `<add name="AppPoolName" ... />` with associated website physical path
-
-4. **File system markers:**
-   - Presence of `.dll` files (managed assemblies) in the application directory
-   - `.runtimeconfig.json` or `.runtimeconfig.json.gz` file (framework-dependent deployment metadata)
-   - `appsettings.json` or `appsettings.Production.json`
-
-5. **Executable signatures:**
-   - In-process: Checking if `w3wp.exe` has loaded `aspnetcore.dll` via `tasklist /m aspnetcore` or inspecting loaded modules with tools like Process Explorer
-   - Out-of-process: `dotnet.exe` or app-specific `.exe` in the process tree under `w3wp.exe`
+5. **Combination signal (highest confidence):**
+   - Process `w3wp.exe` OR process `dotnet.exe` with parent `w3wp.exe` + `ASPNETCORE_ENVIRONMENT` env var + `web.config` in working directory with `<aspNetCore>` element
 
 ## Version / Variant Differences
+- **ASP.NET Core 3.0+:** In-process hosting is the default and recommended. ANCM v2 supports both modes seamlessly.
+- **ASP.NET Core 2.1–2.2:** In-process hosting was available but out-of-process was the only stable option; explicitly set `<AspNetCoreHostingModel>InProcess</AspNetCoreHostingModel>` to enable.
+- **ANCM v2 (bundled with .NET 5.0+):** Stable, supports in-process and out-of-process equally; installed via .NET Hosting Bundle.
+- **Out-of-process mode:** Uses Kestrel server listening on a localhost random port; ANCM proxies requests from IIS to Kestrel over HTTP (HTTPS termination happens at IIS level).
+- **In-process mode:** Registers IIS HTTP Server (IISHttpServer) instead of Kestrel; no loopback proxying; higher throughput.
 
-- **In-Process vs. Out-of-Process:**
-  - **In-process** (default since ASP.NET Core 3.0): App code runs in `w3wp.exe`; uses `IISHttpServer`; no Kestrel; faster (no loopback proxy)
-  - **Out-of-process**: App runs in separate `dotnet.exe` or self-contained `.exe`; IIS acts as reverse proxy via loopback; uses Kestrel internally; more resilient (app crash doesn't crash w3wp.exe)
-  - Controlled by `hostingModel` attribute in web.config (`inprocess` or `outofprocess`)
-
-- **Framework-dependent vs. Self-contained:**
-  - **Framework-dependent**: `processPath="dotnet"` or `processPath="C:\Program Files\dotnet\dotnet.exe"`; requires .NET runtime installed
-  - **Self-contained**: `processPath=".\MyApp.exe"`; includes runtime in deployment; larger deployment size
-  - Both require ASP.NET Core Module (ANCM) to be installed and registered in IIS
-
-- **ASP.NET Core Module versions:**
-  - **AspNetCoreModuleV1** (legacy, IIS 7.5+): Older module, limited features
-  - **AspNetCoreModuleV2** (current): Native module for ASP.NET Core 2.0+; supports in-process and out-of-process; feature-rich
-
-- **IIS hosting bundle versions:** Each .NET version ships a specific ANCM version; ensure the bundle version matches or exceeds the target ASP.NET Core version
+Detectors must handle both modes: check the `hostingModel` attribute in web.config or infer from the parent process of the dotnet.exe executable.
 
 ## Sources
-
-- [In-process hosting with IIS and ASP.NET Core | Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/iis/in-process-hosting?view=aspnetcore-10.0)
-- [Out-of-process hosting with IIS and ASP.NET Core | Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/iis/out-of-process-hosting?view=aspnetcore-9.0)
-- [Host ASP.NET Core on Windows with IIS | Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/iis/?view=aspnetcore-10.0)
-- [web.config file | Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/iis/web-config?view=aspnetcore-8.0)
-- [ASP.NET Core Module (ANCM) for IIS | Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/aspnet-core-module?view=aspnetcore-8.0)
+- [ASP.NET Core Module (ANCM) for IIS — Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/aspnet-core-module?view=aspnetcore-10.0)
+- [Host ASP.NET Core on Windows with IIS — Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/iis/?view=aspnetcore-10.0)
+- [In-process hosting with IIS and ASP.NET Core — Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/iis/in-process-hosting?view=aspnetcore-10.0)
+- [Out-of-process hosting with IIS and ASP.NET Core — Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/iis/out-of-process-hosting?view=aspnetcore-10.0)

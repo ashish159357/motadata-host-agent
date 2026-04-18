@@ -1,204 +1,155 @@
 ---
 name: aspnetcore-linux-nginx-systemd
-description: ASP.NET Core (Kestrel) behind nginx reverse proxy on Linux, managed by systemd; detectable via dotnet process, ASPNETCORE_ENVIRONMENT env var, /etc/systemd/system/*.service with ExecStart=/usr/bin/dotnet, and nginx reverse proxy to localhost:5000.
+description: Kestrel-hosted ASP.NET Core application running behind nginx reverse proxy, supervised by systemd; detected by dotnet process with ASPNETCORE_ENVIRONMENT env var, systemd service file at /etc/systemd/system/kestrel-*.service, and nginx configuration at /etc/nginx/sites-available/* or /etc/nginx/conf.d/*
 ---
 
 # ASP.NET Core on Linux — Kestrel behind nginx with systemd
 
 ## Overview
 
-This is a production-standard deployment pattern where ASP.NET Core runs on Kestrel (an embedded HTTP server) behind an Nginx reverse proxy. Nginx listens on port 80 (and optionally 443 for HTTPS), forwards requests to Kestrel listening on localhost:5000, and handles SSL termination, static content caching, and request compression. A systemd service unit manages the Kestrel process lifecycle, ensuring automatic restart on failure and startup at boot.
-
-This pattern is the recommended approach for hosting ASP.NET Core on Linux (Ubuntu, RHEL, SUSE) in production environments, offering a clear separation between the public-facing web server and the application server.
+This is the standard production deployment pattern for ASP.NET Core applications on Linux (Ubuntu, RHEL, SUSE). Kestrel is a lightweight, cross-platform HTTP server embedded in the .NET runtime; it runs the ASP.NET Core application directly. nginx acts as a reverse proxy on the same host, terminating HTTP connections, handling SSL/TLS termination, serving static files, and forwarding dynamic requests to Kestrel. systemd supervises the Kestrel process, ensuring automatic restart on failure and clean integration with the Linux boot process. This architecture is recommended by Microsoft for production Linux deployments and is widely adopted because it provides security isolation, performance, and operational simplicity.
 
 ## Deployment Process
 
-1. **Install prerequisites:**
-   - Install the .NET runtime: `sudo apt-get install dotnet-runtime-X.0` (Ubuntu) or equivalent for RHEL/SUSE.
-   - Install Nginx: `sudo apt-get install nginx` (Ubuntu) or `sudo yum install nginx` (RHEL).
-
-2. **Publish the ASP.NET Core application:**
+1. **Prepare the application environment:**
    ```bash
-   dotnet publish --configuration Release
-   ```
-   Output is typically in `bin/Release/{TFM}/publish/`.
-
-3. **Copy the published app to the server:**
-   ```bash
-   scp -r bin/Release/net8.0/publish/ user@server:/var/www/helloapp/
-   ```
-   Standard location is `/var/www/<appname>/`.
-
-4. **Set ownership and permissions:**
-   ```bash
-   sudo chown -R www-data:www-data /var/www/helloapp/
-   sudo chmod -R 755 /var/www/helloapp/
+   mkdir -p /var/www/appname
+   chown www-data:www-data /var/www/appname
    ```
 
-5. **Create the systemd service file:**
+2. **Deploy the ASP.NET Core application:**
    ```bash
-   sudo nano /etc/systemd/system/kestrel-helloapp.service
-   ```
-   Add the unit file content (see Configuration Files section).
-
-6. **Enable and start the service:**
-   ```bash
-   sudo systemctl enable kestrel-helloapp.service
-   sudo systemctl start kestrel-helloapp.service
-   sudo systemctl status kestrel-helloapp.service
+   # Copy published .NET assemblies and supporting files to the application directory
+   cp -r /path/to/published/app/* /var/www/appname/
+   chown -R www-data:www-data /var/www/appname
    ```
 
-7. **Configure Nginx as reverse proxy:**
-   Edit `/etc/nginx/sites-available/default` (Ubuntu) or `/etc/nginx.conf` (RHEL/SUSE). Add a `server` block with `proxy_pass http://127.0.0.1:5000/;` and other proxy headers (see Configuration Files section).
+3. **Create the systemd service file** at `/etc/systemd/system/kestrel-appname.service`:
+   ```
+   [Unit]
+   Description=ASP.NET Core App - AppName
+   After=network.target
 
-8. **Test and reload Nginx:**
+   [Service]
+   Type=notify
+   WorkingDirectory=/var/www/appname
+   ExecStart=/usr/bin/dotnet /var/www/appname/AppName.dll
+   Restart=always
+   RestartSec=10
+   KillSignal=SIGINT
+   SyslogIdentifier=kestrel-appname
+   User=www-data
+   Environment=ASPNETCORE_ENVIRONMENT=Production
+   Environment=ASPNETCORE_URLS=http://127.0.0.1:5000
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+4. **Enable and start the systemd service:**
    ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable kestrel-appname.service
+   sudo systemctl start kestrel-appname.service
+   ```
+
+5. **Configure nginx** at `/etc/nginx/sites-available/appname`:
+   ```
+   server {
+       listen 80;
+       server_name example.com www.example.com;
+
+       location / {
+           proxy_pass http://127.0.0.1:5000;
+           proxy_http_version 1.1;
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection keep-alive;
+           proxy_set_header Host $host;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_buffering off;
+           proxy_request_buffering off;
+       }
+   }
+   ```
+
+6. **Enable the nginx configuration and test:**
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/appname /etc/nginx/sites-enabled/appname
    sudo nginx -t
-   sudo nginx -s reload
+   sudo systemctl restart nginx
    ```
 
 ## Process Signatures
 
-- **Process name / executable:** `dotnet` (the .NET runtime)
-- **Command-line patterns:** `/usr/bin/dotnet /var/www/<appname>/<appname>.dll`, optionally with arguments like `--port 5000`
-- **Parent process:** `systemd` (PID 1)
-- **Typical user:** `www-data` (on Debian/Ubuntu) or `nginx` (on some RHEL/SUSE systems)
-- **Working directory:** `/var/www/<appname>/` or similar application deployment root
+- **Process name / executable:** `dotnet`
+- **Command-line patterns:** `/usr/bin/dotnet /var/www/appname/AppName.dll`, `/usr/local/share/dotnet/dotnet /var/www/appname/*.dll`, `dotnet run`
+- **Parent process:** `systemd`
+- **Typical user:** `www-data` (Debian/Ubuntu) or `aspnet` (RHEL/CentOS/SUSE)
+- **Working directory:** `/var/www/appname` (or custom path specified in systemd WorkingDirectory)
 
 ## File System Paths
 
 ### Linux
 
-- **Install root:** `/var/www/<appname>/` (common convention; configurable)
-- **Binaries:** `/usr/bin/dotnet` (runtime), `/var/www/<appname>/<appname>.dll` (compiled assembly)
-- **Application/deploy dir:** `/var/www/<appname>/` (contains published app, appsettings.json, wwwroot, etc.)
-- **PID file:** None standard; systemd manages the PID internally; retrieve via `systemctl status <service-name>` or `systemctl show -p MainPID <service-name>`
-- **systemd service file:** `/etc/systemd/system/kestrel-<appname>.service` or `/etc/systemd/system/<appname>.service`
-- **Nginx configuration:** `/etc/nginx/sites-available/default` (Ubuntu) or `/etc/nginx.conf` (RHEL/SUSE)
-- **Nginx sites-enabled:** `/etc/nginx/sites-enabled/default` (Ubuntu, typically a symlink)
+- **Install root:** Application directory specified in systemd WorkingDirectory, typically `/var/www/appname`
+- **Binaries:** `/usr/bin/dotnet` (primary), `/usr/local/share/dotnet/dotnet` (alternative), `/snap/dotnet/current/dotnet` (snap package)
+- **Application/deploy dir:** `/var/www/appname` (contains *.dll, *.json, and other published artifacts)
+- **PID file:** N/A — systemd manages the process lifecycle; no explicit PID file required
+- **systemd service file:** `/etc/systemd/system/kestrel-*.service`
+- **nginx config:** `/etc/nginx/sites-available/appname`, `/etc/nginx/sites-enabled/appname`, or `/etc/nginx/conf.d/appname.conf`
+- **nginx default config:** `/etc/nginx/nginx.conf`
 
 ## Environment Variables
 
 | Variable | Purpose | Typical value |
 |---|---|---|
-| ASPNETCORE_ENVIRONMENT | Runtime environment (affects appsettings.{env}.json selection) | `Production`, `Staging`, `Development` |
-| ASPNETCORE_URLS | Kestrel bind addresses (optional; usually left unset to use code defaults) | `http://localhost:5000` |
-| DOTNET_NOLOGO | Suppresses .NET SDK logo on startup (optional) | `true` |
-| DOTNET_PRINT_TELEMETRY_MESSAGE | Suppresses telemetry notice (optional) | `false` |
-| ConnectionStrings__DefaultConnection | Database connection string (double underscore replaces `:` in env vars) | `Server=localhost;Database=mydb;User=sa;Password=...` |
+| `ASPNETCORE_ENVIRONMENT` | Application environment (Production, Development, Staging) | `Production` |
+| `ASPNETCORE_URLS` | Kestrel binding address and port | `http://127.0.0.1:5000` |
+| `DOTNET_NOLOGO` | Suppress .NET startup logo in logs | `true` |
+| `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT` | Disable globalization for performance | `false` (or `true` for reduced size) |
+| `ConnectionStrings__DefaultConnection` | Database connection string (double underscore for colon) | database connection string |
+| `ASPNETCORE_HTTPS_PORT` | HTTPS port if configured | `5001` |
 
 ## Configuration Files
 
-- **`/etc/systemd/system/kestrel-<appname>.service`** — systemd unit file (INI format). Defines the service: working directory, executable path, restart policy, environment variables, user account, and logging sink. Example:
-
-  ```ini
-  [Unit]
-  Description=Example .NET Web API App running on Linux
-
-  [Service]
-  WorkingDirectory=/var/www/helloapp
-  ExecStart=/usr/bin/dotnet /var/www/helloapp/helloapp.dll
-  Restart=always
-  RestartSec=10
-  KillSignal=SIGINT
-  SyslogIdentifier=dotnet-helloapp
-  User=www-data
-  Environment=ASPNETCORE_ENVIRONMENT=Production
-  Environment=DOTNET_NOLOGO=true
-  TimeoutStopSec=90
-
-  [Install]
-  WantedBy=multi-user.target
-  ```
-
-- **`/etc/nginx/sites-available/default`** (Ubuntu) or **`/etc/nginx.conf`** (RHEL/SUSE) — Nginx reverse proxy configuration. Maps port 80 (and 443 for HTTPS) to localhost:5000 where Kestrel listens. Example:
-
-  ```text
-  map $http_connection $connection_upgrade {
-    "~*Upgrade" $http_connection;
-    default keep-alive;
-  }
-
-  server {
-    listen        80;
-    server_name   example.com *.example.com;
-    location / {
-        proxy_pass         http://127.0.0.1:5000/;
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade $http_upgrade;
-        proxy_set_header   Connection $connection_upgrade;
-        proxy_set_header   Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto $scheme;
-    }
-  }
-  ```
-
-- **`/var/www/<appname>/appsettings.json`** — Application configuration file (JSON). Contains logging, database connection strings, and feature flags.
-
-- **`/var/www/<appname>/appsettings.Production.json`** — Environment-specific overrides, loaded when `ASPNETCORE_ENVIRONMENT=Production`.
+- **`/etc/systemd/system/kestrel-appname.service`** — systemd unit file defining the Kestrel service: working directory, executable, restart policy, user, environment variables
+- **`/etc/nginx/sites-available/appname`** — nginx reverse proxy configuration with upstream address (typically http://127.0.0.1:5000), proxy headers, SSL/TLS settings
+- **`/var/www/appname/appsettings.json`** — ASP.NET Core configuration file: logging, connection strings, feature flags
+- **`/var/www/appname/appsettings.Production.json`** — Environment-specific overrides loaded when ASPNETCORE_ENVIRONMENT=Production
 
 ## Log Locations
 
-- **systemd journal:** Primary logging sink for the Kestrel process. View logs with:
-  ```bash
-  sudo journalctl -fu kestrel-<appname>.service
-  ```
-  Logs are written to the system journal under the `SyslogIdentifier` (e.g., `dotnet-helloapp`).
-
-- **Application logs:** Typically written to `/var/www/<appname>/logs/` if the app configures file-based logging (via Serilog, NLog, etc.). Paths depend on appsettings.json configuration.
-
-- **Nginx access logs:** `/var/log/nginx/access.log`
-- **Nginx error logs:** `/var/log/nginx/error.log`
+- **systemd journal:** Logs captured by systemd under SyslogIdentifier; query with `journalctl -u kestrel-appname.service` or `journalctl -u kestrel-appname`
+- **Application logs:** Typically written to stdout and captured by systemd journal; custom file logging depends on application's logging configuration in `appsettings.json`
+- **nginx access logs:** `/var/log/nginx/access.log`
+- **nginx error logs:** `/var/log/nginx/error.log`
 
 ## Service / Init Integration
 
-**systemd service unit:** `/etc/systemd/system/kestrel-<appname>.service` (or just `<appname>.service`)
-
-The unit file defines:
-- Service name: `kestrel-<appname>` or `<appname>`
-- Start command: `ExecStart=/usr/bin/dotnet /var/www/<appname>/<appname>.dll`
-- Restart behavior: `Restart=always` with `RestartSec=10` (restarts after 10 seconds on crash)
-- User context: `User=www-data`
-- Logging: via systemd journal; filter with `journalctl -u kestrel-<appname>.service`
-
-**Common systemd commands:**
-```bash
-sudo systemctl status kestrel-<appname>.service      # View service status and PID
-sudo systemctl start kestrel-<appname>.service       # Start the service
-sudo systemctl stop kestrel-<appname>.service        # Stop the service
-sudo systemctl restart kestrel-<appname>.service     # Restart the service
-sudo systemctl enable kestrel-<appname>.service      # Enable autostart at boot
-sudo systemctl disable kestrel-<appname>.service     # Disable autostart
-```
+The Kestrel ASP.NET Core application is supervised by systemd via a service unit file named `/etc/systemd/system/kestrel-appname.service`. The service is registered with `systemctl enable kestrel-appname.service` (to start on boot) and managed with `systemctl start`, `systemctl stop`, and `systemctl status` commands. The systemd unit specifies `Type=notify` (or `Type=simple`), `Restart=always` for automatic recovery, and `User=www-data` for process permissions. nginx is managed separately as `/etc/systemd/system/nginx.service` or via the package manager's init integration.
 
 ## Detection Heuristics
 
-A detection tool should look for:
-
-1. **Process matching:** Executable name is `/usr/bin/dotnet` (or similar .NET runtime path).
-2. **Command-line argument:** Second argument is a `.dll` file path matching `/var/www/*/` or `/opt/*/` patterns.
-3. **Environment variable:** `ASPNETCORE_ENVIRONMENT` is set (any value).
-4. **Parent process:** Parent PID is 1 (systemd) or a systemd cgroup is present.
-5. **Service file presence:** `/etc/systemd/system/*.service` exists with `ExecStart=/usr/bin/dotnet` and `ExecStart=` pointing to a `.dll`.
-6. **Nginx reverse proxy:** `/etc/nginx/sites-available/default`, `/etc/nginx/sites-enabled/default`, or `/etc/nginx.conf` contains `proxy_pass http://127.0.0.1:5000` (or similar localhost port), indicating this dotnet process is fronted by nginx.
-
-**Highest-confidence detection combination:**
-- Process: `/usr/bin/dotnet <path>/*.dll`
-- Environment: `ASPNETCORE_ENVIRONMENT` present
-- Service file: `/etc/systemd/system/*.service` with `ExecStart=/usr/bin/dotnet`
-- Nginx config: `proxy_pass http://localhost:5000` or `proxy_pass http://127.0.0.1:5000`
+1. **Process with name `dotnet` whose parent is systemd:** Indicates a systemd-supervised .NET application.
+2. **Environment variable `ASPNETCORE_ENVIRONMENT` present on the dotnet process:** Strongly signals an ASP.NET Core application (not standalone .NET).
+3. **Working directory `/var/www/*` with `*.dll` and `appsettings.json` present:** Application deployment location.
+4. **Kestrel listening on localhost (127.0.0.1) port 5000 or 5001:** Default Kestrel ports; detectable via `/proc/[pid]/net/tcp` or netstat.
+5. **nginx process listening on 0.0.0.0 port 80 or 443 with proxy_pass directive in config pointing to 127.0.0.1:5000:** Confirms the reverse proxy architecture.
+6. **systemd service unit file `/etc/systemd/system/kestrel-*.service` with ExecStart pointing to dotnet and a .dll file:** Definitive confirmation of systemd supervision.
+7. **Combination: dotnet process, ASPNETCORE_ENVIRONMENT env var, working directory in `/var/www/`, parent systemd, AND nginx config with proxy_pass to localhost:5000:** Near-certain identification.
 
 ## Version / Variant Differences
 
-- **ASP.NET Core versions 3.1+** (including LTS versions like 6.0, 8.0, 10.0): Configuration and systemd integration are consistent. The main difference is the .NET TFM in publish output (e.g., `net6.0` vs. `net8.0`) and the runtime package names.
-- **Default Kestrel port:** Always `5000` in the official Microsoft examples; some custom deployments may use `5001` or other ports, but `5000` is the standard.
-- **User account:** `www-data` on Debian/Ubuntu; on RHEL/SUSE, may be `nginx`, `apache`, or a custom user. The systemd service file always specifies the user in the `User=` directive.
-- **Nginx installation source:** Official nginx packages from `nginx.org` (Ubuntu, RHEL, SUSE) vs. distro-provided packages (often older). Official packages are recommended.
-- **Framework-dependent vs. self-contained deployment:** Framework-dependent (FDD) requires the .NET runtime pre-installed; self-contained (SCD) bundles the runtime. Both use the same systemd integration approach.
+- **ASP.NET Core 3.1 through 10.0+:** All use the same Kestrel + systemd pattern; nginx configuration syntax unchanged.
+- **.NET Framework vs. .NET Core/5+:** This skill applies only to .NET 5+ and .NET Core 2.1+; .NET Framework requires Windows or Mono.
+- **User account:** May be `www-data` (Debian/Ubuntu), `aspnet` or `app` (RHEL/CentOS), or a custom account; always check systemd service file User directive.
+- **Kestrel port:** Typically 5000 (HTTP) or 5001 (HTTPS); custom ports set in ASPNETCORE_URLS environment variable or appsettings.json.
+- **Application directory:** May be `/var/www/appname`, `/opt/appname`, or custom path; always check systemd WorkingDirectory.
+- **SSL/TLS termination:** Can be handled by nginx (most common) or Kestrel directly if ASPNETCORE_HTTPS_PORT is configured.
 
 ## Sources
 
-- [Host ASP.NET Core on Linux with Nginx | Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/linux-nginx?view=aspnetcore-10.0)
-- [Configure the ASP.NET Core application to start automatically - ASP.NET Core | Microsoft Learn](https://learn.microsoft.com/en-us/troubleshoot/developer/webapps/aspnetcore/practice-troubleshoot-linux/2-3-configure-aspnet-core-application-start-automatically)
+- [Host ASP.NET Core on Linux with Nginx - Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/linux-nginx?view=aspnetcore-10.0)
+- [Deploy ASP.NET Core Application on Linux with Nginx - Code Maze](https://code-maze.com/deploy-aspnetcore-linux-nginx/)
+- [Host ASP.NET Core on Linux with Nginx - GitHub (dotnet/AspNetCore.Docs)](https://github.com/dotnet/AspNetCore.Docs/blob/main/aspnetcore/host-and-deploy/linux-nginx.md)

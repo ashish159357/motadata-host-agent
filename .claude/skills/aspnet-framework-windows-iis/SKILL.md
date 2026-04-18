@@ -1,154 +1,136 @@
 ---
 name: aspnet-framework-windows-iis
-description: ASP.NET Framework application hosted in IIS on Windows; process w3wp.exe running under IIS AppPool identity; application root in C:\inetpub\wwwroot\; web.config and applicationHost.config present.
+description: Classic ASP.NET Framework web app (WebAPI, MVC) hosted in IIS with w3wp.exe worker processes in integrated pipeline mode; detect via process name w3wp.exe, ASPNETCORE_ENVIRONMENT or custom environment variables in applicationHost.config, and parent process svchost.exe (W3SVC).
 ---
 
-# ASP.NET Framework on Windows — IIS
+# Classic ASP.NET Framework on IIS — Integrated Pipeline
 
 ## Overview
 
-ASP.NET Framework applications (classic .NET Framework 4.x running ASP.NET WebForms, MVC, or WebAPI) are hosted directly in Internet Information Services (IIS) on Windows Server or Windows client OS. IIS is Microsoft's native web server and the standard deployment pattern for on-premises .NET Framework shops. The application runs in an IIS worker process (w3wp.exe) under an application pool identity. This variant is extremely common in enterprise production environments and remains heavily used despite the push toward ASP.NET Core.
+Classic ASP.NET Framework applications (ASP.NET 4.x with .NET Framework, including WebAPI and MVC frameworks) are hosted in Internet Information Services (IIS) on Windows. The IIS worker process (w3wp.exe) runs the application under an application pool with integrated pipeline mode, which unifies the IIS HTTP pipeline with the ASP.NET managed code pipeline. This is the standard enterprise deployment model for .NET Framework web applications on Windows Server and Windows.
 
 ## Deployment Process
 
-1. **Install IIS and .NET Framework prerequisites:**
-   - Open Control Panel → Programs → Programs and Features → Turn Windows features on or off
-   - Expand Internet Information Services → World Wide Web Services → Application Development Features
-   - Check ASP.NET 4.7 (or the corresponding version for your .NET Framework target)
-   - Confirm World Wide Web Services and IIS Management Console are selected
+1. Install IIS role on Windows Server (or enable IIS on Windows client):
+   ```
+   Install-WindowsFeature -Name Web-Server -IncludeManagementTools
+   ```
 
-2. **Verify IIS configuration:**
-   - Open IIS Manager (press Windows+R, type `inetmgr`)
-   - In Application Pools, confirm DefaultAppPool (or your custom pool) is set to .NET CLR v4.0.30319
-   - If not, right-click the pool, select Basic Settings, and change .NET CLR version accordingly
+2. Ensure .NET Framework runtime (4.5 or later) is installed on the host.
 
-3. **Create or configure the application pool:**
-   - In IIS Manager, right-click Application Pools and select Add Application Pool
-   - Provide a name (e.g., `ContosoUniversityPool`)
-   - Select .NET CLR version 4.0.30319 (or higher if targeting later Framework versions)
-   - Set process model identity (ApplicationPoolIdentity, NetworkService, or custom account)
-   - Configure process model recycling, timeout, and shutdown settings as needed
+3. Create or verify an IIS application pool with integrated pipeline mode:
+   ```
+   appcmd.exe add apppool /name:MyAppPool /managedRuntimeVersion:v4.0 /managedPipelineMode:Integrated
+   ```
 
-4. **Create the IIS website/application:**
-   - In IIS Manager, right-click Sites and select Add Website
-   - Provide Site name (e.g., `ContosoUniversity`)
-   - Set Physical path to the application root (e.g., `C:\inetpub\wwwroot\ContosoUniversity`)
-   - Configure hostname, port, and SSL bindings
-   - Assign the application to the correct application pool
+4. Create or update a website and application binding it to the application pool:
+   ```
+   appcmd.exe add app /site.name:MyWebSite /path:/myapp /physicalPath:C:\inetpub\MyApp
+   appcmd.exe set app "MyWebSite/myapp" /applicationPool:MyAppPool
+   ```
 
-5. **Deploy application binaries:**
-   - Copy the compiled application (from `bin\Release\<Framework>\publish` in Visual Studio) to the physical path
-   - Ensure web.config is present in the application root
-   - Run any SQL Server setup scripts if the application requires database access
+5. Deploy the compiled ASP.NET application binaries (.dll, .pdb, .config files) to the physical path (e.g., `C:\inetpub\MyApp`).
 
-6. **Grant database permissions (if applicable):**
-   - If the application accesses SQL Server Express or SQL Server, run a T-SQL script to grant the application pool identity (e.g., `IIS APPPOOL\ContosoUniversityPool`) the necessary database permissions:
-     ```sql
-     IF NOT EXISTS (SELECT name FROM sys.server_principals WHERE name = 'IIS APPPOOL\ContosoUniversityPool')
-     BEGIN
-         CREATE LOGIN [IIS APPPOOL\ContosoUniversityPool] 
-           FROM WINDOWS WITH DEFAULT_DATABASE=[master]
-     END
-     GO
-     CREATE USER [ContosoUniversityUser] 
-       FOR LOGIN [IIS APPPOOL\ContosoUniversityPool]
-     GO
-     EXEC sp_addrolemember 'db_owner', 'ContosoUniversityUser'
-     GO
-     ```
+6. Set file permissions on the physical path to allow the application pool identity to read/execute (typically `IUSR` or a custom service account).
 
-7. **Verify and test:**
-   - Navigate to the site in a web browser (e.g., `http://localhost/ContosoUniversity`)
-   - Confirm the application loads and database operations work
+7. Optionally set environment variables for the application pool:
+   ```
+   appcmd.exe set config -section:system.applicationHost/applicationPools /+"[name='MyAppPool'].environmentVariables.[name='ASPNETCORE_ENVIRONMENT',value='Production']" /commit:apphost
+   ```
+
+8. Start or recycle the application pool:
+   ```
+   appcmd.exe recycle apppool /apppool.name:MyAppPool
+   ```
+
+9. The w3wp.exe worker process will spawn on the first HTTP request to the application.
 
 ## Process Signatures
 
-- **Process name / executable:** `w3wp.exe` (located in `C:\Windows\System32\inetsrv\`)
-- **Command-line patterns:** 
-  - `C:\Windows\System32\inetsrv\w3wp.exe -s <SiteName> -h <ApplicationHostConfigPath>` (typical launch by WAS)
-  - May include additional flags such as `-w <RootWebConfigPath>` or `-debug`
-- **Parent process:** Windows Process Activation Service (WAS) or W3SVC (World Wide Web Publishing Service)
-- **Typical user:** `IIS APPPOOL\DefaultAppPool`, `IIS APPPOOL\<PoolName>`, `NETWORK SERVICE`, or a custom domain/local account
-- **Working directory:** The physical path of the application (e.g., `C:\inetpub\wwwroot\ContosoUniversity\`)
+- **Process name / executable:** `w3wp.exe`
+- **Command-line patterns:** `C:\Windows\System32\inetsrv\w3wp.exe -apppool AppPoolName` (exact args vary; apppool name is always present)
+- **Parent process:** `svchost.exe` (World Wide Web Publish Service, W3SVC)
+- **Typical user:** `IUSR` (built-in), or a custom service account configured on the application pool identity
+- **Working directory:** Application physical path (e.g., `C:\inetpub\MyApp\`) or the IIS root; varies by configuration but typically the site's document root
 
 ## File System Paths
 
 ### Windows
 
-- **Install root:** `C:\inetpub\wwwroot\` (default IIS root for websites)
-- **Binaries:** 
-  - Compiled .NET Framework assemblies in `C:\inetpub\wwwroot\<AppName>\bin\` (e.g., `MyApp.dll`)
-  - IIS worker process binary: `C:\Windows\System32\inetsrv\w3wp.exe`
-- **Application/deploy dir:** `C:\inetpub\wwwroot\<AppName>\` (contains .aspx, .ascx, web.config, bin/, and App_Data/ directories)
-- **Logs:** 
-  - IIS logs (access/request logs): `C:\inetpub\logs\LogFiles\W3SVC<SiteID>\` (named `exYYMMDD.log`)
-  - Application-generated logs (if configured): typically in `C:\inetpub\wwwroot\<AppName>\App_Data\` or a custom location specified in web.config
+- **Install root:** IIS binaries: `C:\Windows\System32\inetsrv\`; .NET Framework runtime: `C:\Program Files\dotnet\` or `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\`
+- **Binaries:** `C:\Windows\System32\inetsrv\w3wp.exe` (worker process), `C:\Windows\System32\inetsrv\appcmd.exe` (management tool)
+- **Application/deploy dir:** Site physical path (customer-defined); default convention: `C:\inetpub\wwwroot\` for default site, `C:\inetpub\MyAppName\` for named sites
+- **Configuration:** `C:\Windows\System32\inetsrv\config\applicationHost.config` (global IIS config including app pools, sites, environment variables)
+- **Web.config:** Individual application configuration at `{PhysicalPath}\web.config` (per-app ASP.NET config)
 
 ## Environment Variables
 
 | Variable | Purpose | Typical value |
 |---|---|---|
-| `ASPNETCORE_ENVIRONMENT` | (ASP.NET Core only; not used in Framework) | N/A for Framework |
-| `PYTHONPATH`, `NODEJS_PATH` | (not applicable) | N/A |
-| `DOTNET_ROOT` | (optional, rarely set in Framework) | C:\Program Files\dotnet\ |
-| Variables set by WAS/W3SVC services | Inherited by w3wp.exe processes | User-defined at service registry level (HKLM:SYSTEM\CurrentControlSet\Services\W3SVC or WAS) |
-
-Custom environment variables can be configured per application pool or application in `applicationHost.config` within `<environmentVariables>` sections.
+| `ASPNETCORE_ENVIRONMENT` | Runtime environment (if using ASP.NET Core interop or custom detection) | `Production`, `Development`, `Staging` |
+| `ASPNET_ENV` | Legacy ASP.NET environment override (custom, not standard) | `Production` |
+| Custom app-defined variables | Set per application pool in applicationHost.config for app-specific settings | Any custom value |
 
 ## Configuration Files
 
-- **web.config** — Primary application configuration file (XML format); located in the application root (e.g., `C:\inetpub\wwwroot\ContosoUniversity\web.config`). Contains `<system.web>`, `<system.webServer>`, `<appSettings>`, `<connectionStrings>`, and custom application sections. IIS and ASP.NET Framework read this on every request.
-- **applicationHost.config** — IIS-wide configuration file defining sites, application pools, modules, and handlers; located at `C:\Windows\System32\inetsrv\config\applicationHost.config`. Contains the `<system.applicationHost>` section with all site and pool definitions. WAS reads this when creating/recycling worker processes.
-- **Machine.config** — System-wide .NET Framework configuration (rarely edited directly); located at `C:\Windows\Microsoft.NET\Framework\v4.0.30319\Config\Machine.config` (32-bit) or `C:\Windows\Microsoft.NET\Framework64\v4.0.30319\Config\Machine.config` (64-bit). ASP.NET Framework reads this as a base layer before web.config.
+- **`C:\Windows\System32\inetsrv\config\applicationHost.config`** — Global IIS server configuration; defines application pools (name, .NET CLR version, pipeline mode, identity), websites, bindings, and environment variables for each app pool
+- **`{PhysicalPath}\web.config`** — ASP.NET application configuration (XML); connection strings, assembly bindings, HTTP modules, security settings, compilation target framework
+- **`{PhysicalPath}\packages.config`** — NuGet package manifest for Visual Studio project (informational; not loaded at runtime)
+- **`{PhysicalPath}\Global.asax`** — Optional ASP.NET application lifecycle file; defines Application_Start, Application_End, Session_Start events
 
 ## Log Locations
 
-- **IIS access/request logs:** `C:\inetpub\logs\LogFiles\W3SVC<SiteID>\exYYMMDD.log` (daily rollover by default; format configurable as W3C Extended Log Format, IIS Log Format, or NCSA Common Log Format)
-- **IIS Failed Request Tracing (FREB):** `C:\inetpub\logs\FailedReqLogFiles\<SiteName>\` (if FREB is enabled for debugging specific requests)
-- **Application-generated logs:** Typically in `C:\inetpub\wwwroot\<AppName>\App_Data\` or paths configured in web.config (e.g., ELMAH error logs, custom log directories)
-- **Event logs:** Windows Event Viewer under Windows Logs → System (WAS/W3SVC events) and Windows Logs → Application (ASP.NET runtime exceptions)
+- **IIS logs:** `C:\inetpub\logs\LogFiles\W3SVC{SiteId}\` — HTTP access logs, one per day, format defined by IIS site logging settings (typically W3C Extended Log File Format)
+- **Application pool recycling logs:** `C:\inetpub\logs\FailedREQLogFiles\` (if detailed failure logging is enabled)
+- **ASP.NET application logs:** Application-defined; typically `C:\inetpub\{AppName}\logs\` (custom folder created by the app) or Windows Event Viewer (if the app logs to Application event log)
+- **Event Viewer:** Application log contains crashes and errors from w3wp.exe or the ASP.NET runtime (source: `ASP.NET` or app name)
 
 ## Service / Init Integration
 
-ASP.NET Framework applications in IIS are not managed by systemd (Linux) or Windows Task Scheduler. Instead, they are supervised by **Windows Process Activation Service (WAS)** and **World Wide Web Publishing Service (W3SVC)**:
+IIS is managed via the **World Wide Web Publish Service** (W3SVC), which is a Windows system service:
 
-- **W3SVC (World Wide Web Publishing Service):** Windows service (`net start w3svc`, `net stop w3svc`) that manages HTTP.sys and IIS configuration; typically set to Automatic startup.
-- **WAS (Windows Process Activation Service):** Windows service (`net start was`, `net stop was`) that creates and recycles worker processes (w3wp.exe) based on `applicationHost.config` and application pool settings; typically set to Automatic startup.
+- **Service name (Windows Services):** `W3SVC`
+- **Display name:** "World Wide Web Publishing Service"
+- **Service type:** Standard Windows service (not systemd, not launchd; Windows only)
+- **Start type:** Usually "Automatic" (starts on boot)
+- **Start/stop commands:**
+  ```
+  net start w3svc          # Start the W3SVC service
+  net stop w3svc /y        # Stop the W3SVC service (forces app pool recycle)
+  net stop was /y          # Stop Windows Process Activation Service (also stops W3SVC)
+  ```
 
-To manage the application pool and restart the application:
-- Use IIS Manager: right-click the application pool → Recycle
-- Use `appcmd.exe` command-line tool:
-  ```cmd
-  C:\Windows\System32\inetsrv\appcmd.exe recycle apppool /apppool.name:"ContosoUniversityPool"
-  ```
-- Restart W3SVC service:
-  ```cmd
-  net stop /y was
-  net start w3svc
-  ```
+Application pools are child entities of W3SVC; they are not independent Windows services. Recycling an app pool does not restart W3SVC.
 
 ## Detection Heuristics
 
-1. **Process name:** Look for `w3wp.exe` process running under an `IIS APPPOOL\<PoolName>` or `NETWORK SERVICE` user.
-2. **Executable path:** Confirm the executable is located at `C:\Windows\System32\inetsrv\w3wp.exe`.
-3. **Parent process:** Verify the parent process is WAS or W3SVC.
-4. **Working directory:** Check that the working directory is `C:\inetpub\wwwroot\<AppName>\` (or another configured IIS physical path).
-5. **Configuration files:** Confirm presence of `web.config` in the application root and an entry in `applicationHost.config` for the corresponding site/application pool.
-6. **File extensions:** Look for `.aspx`, `.ascx`, `.asmx`, `.asp` files (ASP.NET Framework indicators) in the application directory.
-7. **Assembly paths:** In the application's `bin\` directory, look for .NET Framework assemblies (e.g., `System.Web.dll`, `System.Web.Mvc.dll`, `System.Web.WebPages.dll`) confirming Framework (not Core) usage.
-8. **Registry:** Check `HKLM:SYSTEM\CurrentControlSet\Services\W3SVC` and `HKLM:SYSTEM\CurrentControlSet\Services\WAS` for service status and configuration.
+**Primary signals (in order of confidence):**
+
+1. **Process name is `w3wp.exe`** and parent process is `svchost.exe` (W3SVC) → strong indicator of IIS-hosted application
+2. **Environment variables on w3wp.exe process** — check `/proc/<pid>/environ` equivalent (Windows: WMI or PowerShell) for `ASPNETCORE_ENVIRONMENT`, `ASPNET_ENV`, or custom app pool environment variables defined in `applicationHost.config`
+3. **Presence of `applicationHost.config`** in `C:\Windows\System32\inetsrv\config\` containing `<applicationPool>` entries with `managedPipelineMode="Integrated"` and matching app pool name
+4. **Working directory of w3wp.exe** matches a known IIS site physical path (e.g., `C:\inetpub\...`) with `web.config` present
+5. **File markers in the working directory:** presence of `Global.asax`, `web.config`, `bin\*.dll` (compiled assemblies), or `App_Data\` folder
+
+**Combination heuristic (most unambiguous):**
+- Process `w3wp.exe` with parent `svchost.exe (W3SVC)` **AND** environment variable `ASPNETCORE_ENVIRONMENT` or `ASPNET_ENV` in the process environment **AND** working directory contains `web.config`
 
 ## Version / Variant Differences
 
-- **ASP.NET Framework 4.5 through 4.8.x:** All run on the same CLR version (.NET CLR v4.0.30319) configured in IIS application pools. Minor Framework version differences (4.5, 4.6, 4.7, 4.8) do not change process signatures or deployment topology.
-- **ASP.NET WebForms vs. MVC vs. WebAPI:** All compile to the same .NET Framework assemblies and run identically in IIS worker processes. Detection cannot distinguish between these architectures by process signature alone; file inspection (presence of `Global.asax`, `packages.config`, NuGet references) is required.
-- **IIS 7.0+ (Windows Vista/Server 2008+) vs. IIS 6.0 (Windows Server 2003):** IIS 6.0 and earlier use different process and isolation models (isapi_wp.exe, application isolation levels). This skill focuses on IIS 7.0+ integrated pipeline; IIS 6.0 is end-of-life.
-- **32-bit vs. 64-bit processes:** IIS application pools can be configured to run in 32-bit mode (`Enable 32-Bit Applications` setting) or 64-bit mode. Both run `w3wp.exe` with identical process signatures; the bitness is determined by the platform target of the application and the pool configuration.
+- **IIS 7.0 / 7.5 (Windows Server 2008 / 2008 R2):** Uses integrated pipeline mode; environment variables not supported (introduced in IIS 10)
+- **IIS 8.0 / 8.5 (Windows Server 2012 / 2012 R2):** Integrated pipeline mode standard; no native environment variable support
+- **IIS 10.0 / 10.0.1 (Windows Server 2016):** Integrated pipeline mode standard; environment variables **supported** via `<environmentVariables>` in applicationHost.config
+- **IIS 10.0 (Windows Server 2019+) / IIS 10.0 (Windows 10/11):** Full environment variable support; some tooling may use IIS Express (in-process variant, different binary path)
+
+**Pipeline mode variants:**
+- **Integrated:** IIS and ASP.NET pipeline unified; modern default; all versions 7.0+
+- **Classic:** Legacy mode runs ASP.NET via an ISAPI filter; rarely used in new deployments; same w3wp.exe process but different internal handling
+
+Both modes use the same `w3wp.exe` executable; pipeline mode is a runtime configuration detail, not a file-based signal.
 
 ## Sources
 
-- [Deploy Applications Built on .NET Framework - Microsoft Learn](https://learn.microsoft.com/en-us/troubleshoot/developer/dotnet/framework/installation/deploy-applications)
-- [ASP.NET Web Deployment using Visual Studio: Deploying to IIS - Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/web-forms/overview/deployment/visual-studio-web-deployment/deploying-to-iis)
-- [w3wp.exe | IIS Worker Process | STRONTIC](https://strontic.github.io/xcyclopedia/library/w3wp.exe-A93EC9C3999C4F798B270A4B5C5300A1.html)
-- [What is w3wp.exe? - IIS Worker Process Explained - Stackify](https://stackify.com/w3wp-exe-iis-worker-process/)
-- [Setting application environment variables in IIS without restarts - Andrew Lock](https://andrewlock.net/setting-environment-variables-in-iis-and-avoiding-app-pool-restarts/)
+- [What is w3wp.exe? - IIS Worker Process Explained](https://stackify.com/w3wp-exe-iis-worker-process/)
+- [Relation between w3wp.exe and IIS Application pool - Microsoft Q&A](https://learn.microsoft.com/en-us/answers/questions/583367/relation-between-w3wp-exe-and-iis-application-pool)
+- [Environment Variables <environmentVariables> | Microsoft Learn](https://learn.microsoft.com/en-us/iis/configuration/system.applicationhost/applicationpools/add/environmentvariables/)
+- [Understanding the w3wp.exe Process - Professional Microsoft IIS 8](https://www.oreilly.com/library/view/professional-microsoft-iis/9781118417379/c08_level1_4.xhtml)

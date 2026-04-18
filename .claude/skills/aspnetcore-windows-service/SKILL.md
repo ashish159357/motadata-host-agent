@@ -1,101 +1,123 @@
 ---
 name: aspnetcore-windows-service
-description: ASP.NET Core web application registered as a Windows Service via sc.exe; detectable by dotnet.exe or *.exe child process, ASPNETCORE_* environment variables, appsettings.json in working directory, and libcoreclr.so or Windows Service entry in registry.
+description: ASP.NET Core application registered as a Windows Service via sc.exe create and UseWindowsService(). Detection signals: executable named *.exe in Windows registry HKLM\SYSTEM\CurrentControlSet\Services, parent process services.exe, event logs in Windows Application Event Log with source matching app namespace.
 ---
 
 # ASP.NET Core on Windows — Windows Service
 
 ## Overview
-
-ASP.NET Core applications can be hosted as Windows Services without IIS, allowing them to start automatically on server reboots and run under a service identity. This deployment pattern is common in enterprise environments where background tasks or long-running web APIs need lifecycle management without a web server dependency. Teams choose this variant when they need application auto-restart capabilities and want to avoid IIS overhead.
+ASP.NET Core applications can be deployed as Windows Services without IIS, using the `UseWindowsService()` method and the Windows Service Control Manager (sc.exe). This pattern is common in enterprise environments for background services, worker services, and web APIs that require no external HTTP server. The service runs as a child of services.exe and logs to the Windows Application Event Log rather than file-based logs by default.
 
 ## Deployment Process
 
-1. **Create a Worker Service or ASP.NET Core project** (Visual Studio template or `dotnet new worker`)
-2. **Add the NuGet package** `Microsoft.Extensions.Hosting.WindowsServices`
-3. **Call `AddWindowsService()`** in `Program.cs` (e.g., `builder.Services.AddWindowsService();`)
-4. **Publish as a self-contained or framework-dependent executable** using `dotnet publish -c Release -r win-x64 --self-contained` (or similar)
-5. **Register the Windows Service** using `sc.exe create` as Administrator:
+1. **Publish the application** as a self-contained executable (.exe):
    ```powershell
-   sc.exe create "ServiceName" binpath= "C:\Path\To\App.exe"
+   dotnet publish --configuration Release --output "C:\publish\MyService" --runtime win-x64 --self-contained
    ```
-6. **(Optional) Configure recovery options** using `sc.exe failure`
-7. **Start the service** using `sc.exe start "ServiceName"`
+
+2. **Install the NuGet package** (if not already included):
+   ```
+   Microsoft.Extensions.Hosting.WindowsServices
+   ```
+
+3. **Modify Program.cs** to call `AddWindowsService()`:
+   ```csharp
+   HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
+   builder.Services.AddWindowsService(options =>
+   {
+       options.ServiceName = "MyService";
+   });
+   // ... register hosted services ...
+   IHost host = builder.Build();
+   host.Run();
+   ```
+
+4. **Register the service** with the Windows Service Control Manager:
+   ```powershell
+   sc.exe create "MyService" binpath= "C:\publish\MyService\MyService.exe" DisplayName= "My Service" obj= LocalService start= auto
+   ```
+   (Run PowerShell as Administrator.)
+
+5. **Start the service**:
+   ```powershell
+   sc.exe start "MyService"
+   ```
 
 ## Process Signatures
-
-- **Process name / executable:** `dotnet.exe` (if framework-dependent) or the published `.exe` name (e.g., `MyApp.exe`)
-- **Command-line patterns:** `dotnet.exe C:\Path\To\App.dll` or direct invocation of the published `.exe`; may include `--contentRoot` argument
-- **Parent process:** `services.exe` (Windows Service Control Manager) or `svchost.exe` in some configurations
-- **Typical user:** `SYSTEM`, `LOCAL SERVICE`, `NETWORK SERVICE`, or a configured custom domain account
-- **Working directory:** By default, `C:\Windows\System32` (must explicitly configure via `--contentRoot` or `IHostBuilder.UseContentRoot()` to use a different path)
+- **Process name / executable:** The application's `.exe` filename (e.g., `MyService.exe`, `TodosService.exe`). The process binary is located in the directory specified by `binpath` during registration.
+- **Command-line patterns:** The executable invocation may include optional arguments such as `--contentRoot C:\Path\To\App`. No embedded runtime; the executable is self-contained or delegates to `dotnet.exe C:\Path\To\App.dll`.
+- **Parent process:** `services.exe` (the Windows Service Control Manager host process).
+- **Typical user:** `SYSTEM` (default), `LocalService`, `NetworkService`, or a custom user account specified during `sc.exe create`.
+- **Working directory:** By default, `C:\Windows\System32` or `C:\Windows\SysWOW64`. Can be overridden via `--contentRoot` argument or app configuration.
 
 ## File System Paths
 
 ### Windows
-
-- **Install root:** Typically `C:\Program Files\AppName\` or `C:\Program Files (x86)\AppName\` (or custom location specified at deployment)
-- **Binaries:** `C:\Program Files\AppName\App.exe` (self-contained) or `C:\Program Files\AppName\App.dll` (framework-dependent, with `dotnet.exe` in DOTNET_ROOT)
-- **Application/deploy dir:** `C:\Program Files\AppName\` (contains executable, DLLs, and supporting files)
-- **Configuration:** `C:\Program Files\AppName\appsettings.json`, `C:\Program Files\AppName\appsettings.{Environment}.json`
-- **Logs:** Windows Event Log (Application log, source name = application namespace or configured event source)
+- **Install root:** User-defined at `sc.exe create` time; typical locations include `C:\Program Files\MyApp`, `C:\Services\MyService`, or `C:\publish\MyService`.
+- **Binaries:** `<install-root>\MyService.exe` (or the project's `.exe` name).
+- **Application/deploy dir:** Same as install root; all assemblies, configuration files, and dependencies are in this directory.
+- **Service registry entry:** `HKLM\SYSTEM\CurrentControlSet\Services\MyService` (where `MyService` is the service name passed to `sc.exe create`). The `ImagePath` value contains the full path to the `.exe`.
 
 ## Environment Variables
-
 | Variable | Purpose | Typical value |
 |---|---|---|
-| `ASPNETCORE_ENVIRONMENT` | Determines which `appsettings.{Environment}.json` is loaded | `Production`, `Development`, `Staging` |
-| `ASPNETCORE_URLS` | Bind address(es) for the HTTP server | `http://localhost:5000` or `http://+:80` |
-| `ASPNETCORE_HTTPS_PORT` | HTTPS port if applicable | `443` |
-| `DOTNET_ENVIRONMENT` | Alternative environment variable (older naming) | `Production`, `Development` |
-| `DOTNET_RUNNING_IN_CONTAINER` | Set by framework; indicates container mode (false for Windows Service) | `false` |
+| `ASPNETCORE_ENVIRONMENT` | Selects appsettings file variant (Development, Staging, Production) | `Production` |
+| `DOTNET_*` | Runtime configuration (e.g., `DOTNET_GCSERVER`, `DOTNET_MULTILEVEL_LOOKUP`) | `1` |
+| `ASPNETCORE_URLS` | Kestrel binding addresses (if hosting HTTP directly) | `http://localhost:5000` |
+
+These are typically set in `appsettings.json` or environment-specific `appsettings.{Environment}.json`, not as system environment variables.
 
 ## Configuration Files
-
-- **appsettings.json** — Main application configuration; located in the published directory (e.g., `C:\Program Files\AppName\appsettings.json`)
-- **appsettings.{Environment}.json** — Environment-specific overrides (e.g., `appsettings.Production.json` loaded when `ASPNETCORE_ENVIRONMENT=Production`)
-- **appsettings.Development.json** — Developer-only settings (typically not deployed)
-- **web.config** — (Optional, IIS-only; not used for Windows Service deployment; ignore if present)
+- **appsettings.json** — Application configuration, logging levels, and event log settings. Located in the install root directory. Example:
+  ```json
+  {
+    "Logging": {
+      "LogLevel": {
+        "Default": "Information"
+      },
+      "EventLog": {
+        "SourceName": "MyService",
+        "LogName": "Application",
+        "LogLevel": {
+          "Default": "Warning"
+        }
+      }
+    }
+  }
+  ```
+- **appsettings.{Environment}.json** — Environment-specific overrides (e.g., `appsettings.Production.json`).
 
 ## Log Locations
-
-- **Windows Event Log (Primary):** Application log entries with source name matching the application namespace or explicit `EventLogSettings.SourceName` configured in `appsettings.json`
-- **File-based logs:** If configured via ILogger or third-party provider (e.g., Serilog), typically written to `C:\Program Files\AppName\logs\` or a path specified in `appsettings.json`
-- **Query Event Log:** Open Event Viewer → Windows Logs → Application, filter by the source name
+- **Windows Application Event Log** — All logging by default goes to the Application Event Log accessible via **Event Viewer** > **Windows Logs** > **Application**. Log source name is configurable in `appsettings.json` under `EventLog.SourceName` (default matches the app namespace or `.ServiceName` set in `AddWindowsService()`).
+- **No file-based logs by default** — Unless explicitly configured via Serilog, NLog, or another file-based logging provider. File logging must be added to the logging pipeline in Program.cs.
 
 ## Service / Init Integration
+Windows Service Control Manager (sc.exe). The service is registered in the registry at `HKLM\SYSTEM\CurrentControlSet\Services\<ServiceName>`, where `<ServiceName>` is the name passed to `sc.exe create`. Management commands:
+- **Create:** `sc.exe create "ServiceName" binpath= "C:\Path\To\App.exe"`
+- **Start:** `sc.exe start "ServiceName"`
+- **Stop:** `sc.exe stop "ServiceName"`
+- **Delete:** `sc.exe delete "ServiceName"`
+- **Query configuration:** `sc.exe qc "ServiceName"`
+- **Query failure/recovery:** `sc.exe qfailure "ServiceName"`
+- **Set failure recovery:** `sc.exe failure "ServiceName" reset= <seconds> actions= restart/<delay>/restart/<delay>/run/<delay>`
 
-- **Service Name:** Arbitrary name assigned by operator during `sc.exe create` command (e.g., `"MyWebService"`, `.NET Joke Service`)
-- **Service Manager:** Windows Service Control Manager (`services.exe`)
-- **Service Registry:** `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\<ServiceName>` (binary path stored in `ImagePath` value)
-- **Lifecycle commands:**
-  - Start: `sc.exe start "ServiceName"`
-  - Stop: `sc.exe stop "ServiceName"`
-  - Delete: `sc.exe delete "ServiceName"`
-  - Query: `sc.exe query "ServiceName"`
-- **Auto-start:** Configured via `sc.exe config "ServiceName" start= auto` (default is `demand`)
-- **Recovery behavior:** Configured via `sc.exe failure "ServiceName"` (e.g., automatic restart on crash)
+The service can also be managed via the Services MMC snap-in (`services.msc`).
 
 ## Detection Heuristics
-
-1. **Highest confidence:** Process parent is `services.exe` AND executable is named `*.exe` AND process environment contains `ASPNETCORE_*` variable (e.g., `ASPNETCORE_ENVIRONMENT`, `ASPNETCORE_URLS`)
-2. **High confidence:** Executable path is under `C:\Program Files\` AND `appsettings.json` exists in the same directory AND contains `"Logging"` or `"Kestrel"` JSON keys
-3. **High confidence:** Command-line contains `dotnet.exe` with a `.dll` argument AND `ASPNETCORE_ENVIRONMENT` variable is set
-4. **Medium confidence:** Process working directory is `C:\Windows\System32` AND process name is `dotnet.exe` OR custom `.exe` AND parent is `services.exe`
-5. **Registry check:** Query `HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\` for entries with `ImagePath` containing `.exe` or `dotnet.exe` followed by a `.dll` path
+- **Registry check:** Presence of service key in `HKLM\SYSTEM\CurrentControlSet\Services\<ServiceName>` with `ImagePath` pointing to a `.exe` file in a user-defined directory.
+- **Process parent:** Parent process is `services.exe` (PID 1 or a system service host).
+- **Event Log source:** Look for a source in the Application Event Log matching the `ServiceName` or app namespace.
+- **Executable path pattern:** `.exe` file whose directory is not `C:\Windows\System32` and is registered in the Services registry hive.
+- **Loaded assembly check (if accessible):** Presence of `Microsoft.Extensions.Hosting.WindowsServices.dll` in the application directory.
+- **Command-line arguments:** Service executable may include `--contentRoot` or other host-configuration arguments.
 
 ## Version / Variant Differences
-
-- **ASP.NET Core 3.1–5.0:** `UseWindowsService()` extension available; Worker Service template recommended; logging defaults to Event Log
-- **ASP.NET Core 6.0–10.0:** Same as 3.1–5.0; `AddWindowsService()` replaces `UseWindowsService()` in newer sample code; Event Log source creation restricted to Admin users
-- **Framework-dependent vs. self-contained:** 
-  - Framework-dependent: `dotnet.exe` invoked with `.dll` argument; requires .NET runtime installed
-  - Self-contained: Published `.exe` runs standalone; includes runtime in binary; common in production
-- **Content root:** By default set to `AppContext.BaseDirectory` (the executable's directory) when running as a Windows Service; operators may override via `--contentRoot` argument or `IHostBuilder.UseContentRoot()`
-- **.NET 6 exception handling:** `BackgroundServiceExceptionBehavior.StopHost` is default; unhandled exceptions stop the service (older versions defaulted to `Ignore`, causing zombie processes)
+- **.NET 6+:** Default exception behavior changed from `Ignore` to `StopHost`; services must call `Environment.Exit(1)` in catch blocks to enable SCM recovery options.
+- **.NET 5 and earlier:** Default exception behavior is `Ignore`, which can result in zombie processes if unhandled exceptions occur.
+- **Single-file vs. framework-dependent:** Single-file executables (set `<PublishSingleFile>true</PublishSingleFile>` in .csproj) have no external dependencies; framework-dependent deployments require the .NET runtime installed separately.
+- **ASP.NET Core vs. Worker Service:** ASP.NET Core services use `Host.CreateApplicationBuilder()` and typically include web hosting; Worker Services use `Host.CreateDefaultBuilder()` and `BackgroundService`. Both use `AddWindowsService()`.
 
 ## Sources
-
-- [Host ASP.NET Core in a Windows Service | Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/windows-service?view=aspnetcore-10.0)
-- [Create Windows Service using BackgroundService - .NET | Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/core/extensions/windows-service)
-- [sc.exe create command | Microsoft Learn](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/sc-create)
+- [Host ASP.NET Core in a Windows Service - Microsoft Learn](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/windows-service?view=aspnetcore-10.0)
+- [Create Windows Service using BackgroundService - .NET - Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/core/extensions/windows-service)
+- [Running .NET Core Applications as a Windows Service - Code Maze](https://code-maze.com/aspnetcore-running-applications-as-windows-service/)

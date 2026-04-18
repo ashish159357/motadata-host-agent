@@ -1,0 +1,47 @@
+language: dotnet
+skills:
+  - skill: aspnetcore-linux-systemd
+    tech: ASP.NET Core (Kestrel)
+    os: linux
+    variant: Kestrel-hosted ASP.NET Core app managed by systemd
+    include: false
+  - skill: aspnetcore-linux-nginx-systemd
+    tech: ASP.NET Core behind nginx
+    os: linux
+    variant: Kestrel ASP.NET Core behind nginx reverse proxy, systemd-managed
+    include: true
+  - skill: aspnetcore-windows-iis
+    tech: ASP.NET Core on IIS
+    os: windows
+    variant: IIS hosting via ASP.NET Core Module (in-process / out-of-process)
+    include: true
+  - skill: aspnetcore-windows-service
+    tech: ASP.NET Core as Windows Service
+    os: windows
+    variant: ASP.NET Core app registered as a Windows Service (sc.exe / UseWindowsService)
+    include: true
+  - skill: dotnet-worker-linux-systemd
+    tech: .NET Worker Service (BackgroundService)
+    os: linux
+    variant: .NET generic-host worker/console app managed by systemd
+    include: true
+  - skill: dotnet-worker-windows-service
+    tech: .NET Worker Service
+    os: windows
+    variant: .NET generic-host worker service registered as a Windows Service
+    include: true
+  - skill: aspnet-framework-windows-iis
+    tech: ASP.NET Framework on IIS
+    os: windows
+    variant: Classic .NET Framework ASP.NET / WebAPI / MVC app hosted in IIS
+    include: true
+  - skill: dotnet-framework-windows-service
+    tech: .NET Framework Windows Service
+    os: windows
+    variant: Classic .NET Framework Windows Service (ServiceBase / TopShelf)
+    include: true
+  - skill: dotnet-selfcontained-linux-systemd
+    tech: .NET self-contained deployment
+    os: linux
+    variant: Self-contained single-file .NET publish managed by systemd
+    include: true

@@ -1,0 +1,42 @@
+language: node
+skills:
+  - skill: node-linux-systemd
+    tech: Node.js
+    os: linux
+    variant: Direct systemd service, most common production pattern
+    include: true
+  - skill: node-pm2-linux
+    tech: Node.js with PM2
+    os: linux
+    variant: PM2 process manager for Node applications
+    include: true
+  - skill: node-pm2-windows
+    tech: Node.js with PM2
+    os: windows
+    variant: PM2 process manager on Windows
+    include: true
+  - skill: node-supervisord-linux
+    tech: Node.js
+    os: linux
+    variant: Process manager supervision with supervisord
+    include: false
+  - skill: node-windows-service-nssm
+    tech: Node.js
+    os: windows
+    variant: Windows service via NSSM wrapper
+    include: true
+  - skill: node-linux-init-d
+    tech: Node.js
+    os: linux
+    variant: Legacy init.d script for Node applications
+    include: false
+  - skill: node-forever-linux
+    tech: Node.js with Forever
+    os: linux
+    variant: Forever process manager for Node.js
+    include: true
+  - skill: node-macos-launchd
+    tech: Node.js
+    os: macos
+    variant: Application as launchd service on macOS
+    include: false
