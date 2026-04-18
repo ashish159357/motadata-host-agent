@@ -81,6 +81,37 @@ var systemExcludeList = map[string]bool{
 	"bluetoothd": true, "upowerd": true, "udisksd": true, "snapd": true,
 }
 
+// distinctiveArg extracts a distinguishing argument from cmdline to differentiate
+// processes with the same executable name (e.g., java, dotnet).
+func distinctiveArg(p processInfo) string {
+	if len(p.CmdLine) == 0 {
+		return ""
+	}
+
+	exe := filepath.Base(p.Executable)
+	switch exe {
+	case "java", "javaw":
+		for i, arg := range p.CmdLine {
+			if arg == "-jar" && i+1 < len(p.CmdLine) {
+				return filepath.Base(p.CmdLine[i+1])
+			}
+		}
+		for _, arg := range p.CmdLine[1:] {
+			if strings.HasPrefix(arg, "-") {
+				continue
+			}
+			if !strings.Contains(arg, ".") {
+				return arg
+			}
+		}
+	case "dotnet":
+		if len(p.CmdLine) > 1 {
+			return filepath.Base(p.CmdLine[1])
+		}
+	}
+	return ""
+}
+
 // DiscoverServices scans /proc and returns all detected application services
 // grouped by their executable name.
 func DiscoverServices() ([]Service, error) {
@@ -122,12 +153,17 @@ func DiscoverServices() ([]Service, error) {
 	}
 	wg.Wait()
 
-	// Group by comm name (basename of exe) so worker forks share one entry.
+	// Group by comm name + distinctive argument to separate distinct apps
+	// while keeping worker forks (same cmdline) together.
 	groups := make(map[string][]processInfo)
 	for _, p := range raw {
 		key := p.Name
 		if key == "" {
 			key = filepath.Base(p.Executable)
+		}
+		// Append distinctive argument: JAR name, DLL name, class name, etc.
+		if arg := distinctiveArg(p); arg != "" {
+			key = key + ":" + arg
 		}
 		groups[key] = append(groups[key], p)
 	}
