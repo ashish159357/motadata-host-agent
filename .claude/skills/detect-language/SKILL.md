@@ -1,6 +1,6 @@
 ---
 name: detect-language
-description: Enhances language detection for one specific language in internal/system/language.go. Reads LANGUAGE_DETECTION_REGISTRY.md and CLAUDE.md for current state, adds missing signals across all five detection stages (environ→cmdline→files→maps→exepath), writes matching tests, runs gofmt+tests+build, then updates LANGUAGE_DETECTION_REGISTRY.md and CLAUDE.md. Use whenever someone wants to add or improve language detection: /start-code perl | /start-code rust | /start-code assembly | /start-code kotlin
+description: "Enhances language detection for one specific language in internal/system/language.go. Reads LANGUAGE_DETECTION_REGISTRY.md and CLAUDE.md for current state, adds missing signals across all five detection stages (environ→cmdline→files→maps→exepath), writes matching tests, runs gofmt+tests+build, then updates LANGUAGE_DETECTION_REGISTRY.md and CLAUDE.md. Use whenever someone wants to add or improve language detection: /start-code perl | /start-code rust | /start-code assembly | /start-code kotlin"
 model: sonnet
 tools: Read, Write, Edit, Bash, Glob, Grep
 ---
