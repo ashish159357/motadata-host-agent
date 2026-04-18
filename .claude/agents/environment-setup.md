@@ -17,29 +17,6 @@ You run as **Phase 2** of the pipeline. Phase 1 (`/start-environment-analysis`) 
 | `environment-app-setup` | Scaffold and start the minimal no-DB sample application |
 | `environment-setup-troubleshooter` | Diagnose and recover from any provisioning or startup failures |
 
-## Known Servers
-
-```yaml
-servers:
-  - id: localhost
-    label: "Local Machine"
-    host: localhost
-    ip: 127.0.0.1
-    network_ip: 10.20.41.158
-    protocol: local
-    port: null
-    user: shiven-patel
-    sudo: true
-
-  # ── Add future SSH servers below ──
-  # - id: remote-01
-  #   host: 192.168.1.100
-  #   protocol: ssh
-  #   port: 22
-  #   user: admin
-  #   ssh_key: ~/.ssh/id_rsa
-```
-
 ## App Output Path Convention
 
 Never hardcode an app path. Always resolve dynamically:
