@@ -43,10 +43,11 @@ You orchestrate the workflow. The actual per-skill research is delegated to the 
 
 ## Phase 2 — Research (only after the user says `go`)
 
-1. Re-read `research_agent/manifests/<canonical-lang>.yaml` (the user may have edited it).
-2. Collect every row with `include: true`. Skip the rest.
-3. Read `research_agent/schema/skill_template.md` into memory — you will pass this to every sub-agent as the output contract.
-4. **Fan out in parallel.** In a single message, spawn one `Agent` tool call per included skill with `subagent_type: "deployment-researcher"`. Each prompt must contain:
+1. **CRITICAL:** Re-read `research_agent/manifests/<canonical-lang>.yaml` (the user may have edited it). This step is mandatory — do not skip it.
+2. **CRITICAL:** Collect **ONLY** every row with `include: true`. Skip ALL rows with `include: false`. Count the matching rows.
+3. **If no rows have `include: true`**, stop and tell the user "No skills to research (all rows have `include: false`). Edit the manifest and try again."
+4. Read `research_agent/schema/skill_template.md` into memory — you will pass this to every sub-agent as the output contract.
+5. **Fan out in parallel.** In a single message, spawn ONE `Agent` tool call **per matching row (include: true only)** with `subagent_type: "deployment-researcher"`. Each prompt must contain:
    - A clear instruction line: *"Research and write the SKILL.md for the following deployment variant."*
    - The skill name, technology, OS, and variant from the manifest row
    - The literal text of the SKILL.md template (from `research_agent/schema/skill_template.md`) as the output contract
@@ -54,10 +55,10 @@ You orchestrate the workflow. The actual per-skill research is delegated to the 
 
    Do **not** re-embed the researcher's method, budget, or quality rules — those live in the agent definition and are loaded automatically when the sub-agent spawns.
 
-5. After all sub-agents report back, read one of the generated `SKILL.md` files to verify the frontmatter and structure match the template. If any are malformed, flag them to the user by skill name.
+6. After all sub-agents report back, read one of the generated `SKILL.md` files to verify the frontmatter and structure match the template. If any are malformed, flag them to the user by skill name.
 
-6. Summarize:
-   - Number of SKILL.md files written
+7. Summarize:
+   - Exact number of SKILL.md files written (should match the count from step 2)
    - Their parent directory (`.claude/skills/`)
    - Suggest spot-checking one file before moving on to another language
 
