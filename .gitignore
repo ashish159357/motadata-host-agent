@@ -1,0 +1,27 @@
+# Phase outputs — not needed on cloned machines
+apps/
+docs/
+bin/
+deploy/
+research_agent/
+
+# Go build artifacts
+*.test
+*.out
+
+# Environment / secrets
+.env
+.env.*
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude local settings
+.claude/settings.local.json
