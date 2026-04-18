@@ -185,7 +185,7 @@ runs five stages in priority order, returning at the first match:
 | Language | Environ signals | CmdLine signals | File markers | Maps signals | ExePath signals | Last updated |
 |----------|----------------|-----------------|--------------|--------------|-----------------|--------------|
 | go | GOMEMLIMIT, GOGC, GOMAXPROCS, GOPATH, GOFLAGS, GONOSUMDB, GONOSUMCHECK | `go` binary; `.go` arg | go.mod, go.sum, go.work, go.work.sum, *.go | — (static) | /go/bin/, golang, /usr/local/go/ | 2026-04-17 |
-| java | JAVA_TOOL_OPTIONS, JAVA_OPTS, CATALINA_*, JVM_OPTS, JAVA_HOME, JAVA_VERSION, CLASSPATH, JDK_JAVA_OPTIONS | java, javaw; -jar flag; *.jar arg | pom.xml, build.gradle, build.gradle.kts, settings.gradle, gradlew, *.jar, *.war, *.ear | libjvm.so, libjava.so | jdk, jre, openjdk, java- | 2026-04-17 |
+| java | JAVA_TOOL_OPTIONS, JAVA_OPTS, CATALINA_*, JVM_OPTS, JAVA_HOME, JAVA_VERSION, CLASSPATH, JDK_JAVA_OPTIONS | java, javaw; -jar flag; *.jar arg | pom.xml, build.gradle, build.gradle.kts, settings.gradle, gradlew, *.jar, *.war, *.ear | libjvm.so, libjava.so | jdk, jre, openjdk, java- | 2026-04-18 |
 | python | PYTHONPATH, PYTHONHOME, VIRTUAL_ENV, CONDA_* | python, python2, python3; *.py | requirements.txt, setup.py, pyproject.toml, *.py | libpython | python, pyenv | — |
 | nodejs | NODE_ENV, NODE_OPTIONS, NODE_PATH, NPM_CONFIG_PREFIX | node, nodejs, npm, npx, yarn, pnpm; *.js, *.mjs | package.json, node_modules | libnode.so | nodejs, /node/bin/ | — |
 | dotnet | ASPNETCORE_*, DOTNET_* | dotnet | appsettings.json, web.config, *.pdb, *.deps.json | libcoreclr, libmono | dotnet | — |
@@ -274,5 +274,6 @@ GOROOT=/snap/go/current bash -c 'gofmt -w ./internal/system/'
 
 | Date | Command | Language | Signals added | Tests added |
 |------|---------|----------|---------------|-------------|
+| 2026-04-18 | /start-code java | java | environ×9, cmdline×2, files×8, maps×2, exepath×4 | 15 |
 | 2026-04-17 | /detect-language java | java | environ×3, cmdline×1, files×2, exepath×1 | 8 |
 | 2026-04-17 | /detect-language go | go | environ×4, cmdline×1, files×3, exepath×1 | 7 |
