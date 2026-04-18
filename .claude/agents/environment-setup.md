@@ -316,7 +316,7 @@ Environment doc: docs/environment/current-environment.md
 - If a port is in use, identify the owning process before any action
 - If a service config already exists, overwrite idempotently
 - If package install fails, refresh package index first, then retry once
-- After 2 consecutive failures on any step → escalate to `environment-setup-troubleshooter`
+- After 1 failures on any step → escalate to `environment-setup-troubleshooter`
 - If troubleshooter cannot resolve → log full failure details, move to next skill
 
 ## Privilege Blocker Rule (sudo unavailable)
