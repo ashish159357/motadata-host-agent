@@ -1,26 +1,90 @@
----
-description: Close language detection gaps in internal/system for one language
-argument-hint: <language>
----
+# /start-code <lang>
 
-The user wants to enhance language detection for: **$ARGUMENTS**
+Enhances language detection for one specific language in
+`internal/system/language.go`. Adds missing signals across all five
+detection stages (environ → cmdline → files → maps → exepath), writes
+matching tests, runs gofmt + tests + build, then updates `LANGUAGE_DETECTION_REGISTRY.md`
+and `CLAUDE.md`.
 
-Delegate the work to the `add-detect-language-code` sub-agent (defined at `.claude/agents/add-detect-language-code.md`), which owns the gap analysis, code edits, tests, build verification, and documentation updates for `internal/system/language.go`.
+## Usage
 
-## Workflow
+```
+/start-code <lang>
+```
 
-1. Normalise `$ARGUMENTS`: lowercase and trim. Resolve aliases: `node` → `nodejs`, `.net`/`csharp` → `dotnet`, `c++` → `cpp`.
-2. If the resolved language is not one of `go, java, python, nodejs, dotnet, ruby, php, perl, rust, cpp`, print:
-   > `Language "<arg>" is not supported. Supported: go, java, python, nodejs, dotnet, ruby, php, perl, rust, cpp`
-   and stop. Do not spawn the sub-agent.
-3. Spawn **one** `Agent` tool call with `subagent_type: "add-detect-language-code"`. The prompt must include:
-   - `LANG = <resolved language>`
-   - Instruction: *"Follow your agent definition. Perform gap analysis against LANGUAGES.md and the Reference Signal Catalogue, edit `internal/system/language.go` and `internal/system/language_test.go`, run gofmt + tests + build, then update LANGUAGES.md and CLAUDE.md."*
-4. After the sub-agent returns, relay its final completion report (Language, Signals added, Tests added, Test result, Executable, LANGUAGES.md, CLAUDE.md) to the user verbatim.
-5. If the sub-agent reports a build or test failure, surface the exact error output to the user and stop — do not retry blindly.
+Accepts any real programming language. Examples:
 
-## Rules
+```
+/start-code assembly
+/start-code kotlin
+/start-code swift
+/start-code typescript
+/start-code perl
+/start-code rust
+/start-code cpp
+```
 
-- Do not edit `language.go`, `language_test.go`, `LANGUAGES.md`, or the coverage table in `CLAUDE.md` yourself. Those files are owned by the sub-agent.
-- Do not spawn the sub-agent for an unsupported language.
-- Run exactly one sub-agent per invocation.
+**Aliases accepted:** `node` → `nodejs`, `js` → `nodejs`, `.net`/`csharp`/`c#` → `dotnet`,
+`c++` → `cpp`, `objc` → `objectivec`, `ts` → `typescript`, `sh` → `shell`, `asm` → `assembly`
+
+**Invalid/joke languages are rejected immediately** (e.g. `bhailang`, `lolcode` as a service,
+random words) — validation happens before any file I/O to avoid wasting tokens.
+
+## Execution
+
+Follow the full instructions in:
+
+```
+.claude/agents/add-detect-language-code.md
+```
+
+## Validation behaviour
+
+The agent checks the argument against a **Valid Language Registry** (40+ real languages)
+before reading any file. If the language is not recognised:
+
+```
+"<arg>" is not a recognised programming language.
+```
+
+No files are touched. This keeps token usage low for invalid inputs.
+
+## What it does (for valid languages)
+
+1. Reads `LANGUAGE_DETECTION_REGISTRY.md` and `CLAUDE.md` to determine what signals are already present
+2. Cross-references against the Signal Catalogue to find gaps
+3. Edits `internal/system/language.go` — inserts missing signals into the correct stage functions
+4. Edits `internal/system/language_test.go` — adds one table-driven test case per new signal
+5. Runs `gofmt`, `go test ./internal/system/...`, and `go build` — stops on first failure
+6. Updates `LANGUAGE_DETECTION_REGISTRY.md` coverage row and change log
+7. Updates `CLAUDE.md` coverage table and Agent Change Log
+
+## Signal coverage
+
+- **Core languages** (go, java, python, nodejs, dotnet, ruby, php, perl, rust, cpp):
+  use detailed pre-built signal catalogues
+- **Extended languages** (assembly, kotlin, swift, typescript, dart, elixir, haskell, etc.):
+  use starter catalogues + agent inference
+- **Other registry languages** (ada, cobol, fortran, vhdl, etc.):
+  agent infers signals from language knowledge
+
+## Files touched
+
+- `internal/system/language.go`
+- `internal/system/language_test.go`
+- `LANGUAGE_DETECTION_REGISTRY.md`
+- `CLAUDE.md`
+
+## After completion
+
+Prints a summary report:
+
+```
+Language:         <lang>
+Signals added:    <N> (environ×A, cmdline×B, files×C, maps×D, exepath×E)
+Tests added:      <N> new cases
+Test result:      PASS (<total> tests)
+Executable:       bin/motadata-host-agent  (<size>)
+LANGUAGE_DETECTION_REGISTRY.md:     updated
+CLAUDE.md:        updated
+```
